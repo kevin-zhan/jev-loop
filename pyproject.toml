@@ -1,9 +1,27 @@
 [project]
 name = "jev-loop"
 version = "0.2.0"
-description = "Explicit-state decision runtime: code owns the loop, Jev only chooses within a frame"
+description = "Explicit-state decision runtime: code owns the loop, a model only chooses within a frame"
+readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "kevin-zhan" }]
+keywords = ["ai-agents", "decision-runtime", "event-sourcing", "llm", "automation", "pi-package"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/kevin-zhan/jev-loop"
+Issues = "https://github.com/kevin-zhan/jev-loop/issues"
+Documentation = "https://github.com/kevin-zhan/jev-loop/blob/main/docs/getting-started.html"
 [project.scripts]
 jev-loop-demo = "jev_loop.demo:main"
 jev-loop-host = "jev_loop.host.cli:main"
