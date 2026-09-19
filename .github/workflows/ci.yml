@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: kernel and host (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run pytest
+      - run: uv run ruff check .
+      - run: uv run jev-loop-demo --scenario clean
+      - run: uv run jev-loop-demo --scenario noop
+      - run: uv run jev-loop-demo --scenario cycle
+
+  pi-extension:
+    name: pi package over RPC
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the pi CLI
+        run: npm install --global @earendil-works/pi-coding-agent
+      - run: npm test
