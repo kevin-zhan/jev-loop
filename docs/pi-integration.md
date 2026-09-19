@@ -99,9 +99,20 @@ job_id = services.cognition.request(
 
 controller 可继续运行，并通过 `services.cognition.get(job_id)` 检查状态。pi 扩展把 pending job 作为明确标注的
 custom message 交给 owner session；主 agent 用 `jev_loop respond` 提交匹配 run/job/version 的结果。迟到、重复、
-版本不匹配、结构不符或 run 已停止的结果会被拒绝。当前 dependency-free validator 支持 JSON Schema 的
-`type / enum / const / required / properties / additionalProperties / items / minItems / maxItems / minLength /
-maxLength / minimum / maximum` 子集；bundle 不应假设其他关键字已执行。每个 run 最多同时有 8 个 pending job，
+版本不匹配、结构不符或 run 已停止的结果会被拒绝。当前 dependency-free validator 只实现下列关键字的**有限语义**，
+bundle 不应假设其他关键字已执行，也不应把这些当作完整的 Draft 2020-12：
+
+| 关键字 | 实际行为与限制 |
+|---|---|
+| `type` | `null / boolean / integer / number / string / array / object`；`integer`、`number` 都不接受 `bool` |
+| `enum` / `const` | 用 Python 相等比较，因此 `1` 与 `true` 不区分；`const` 缺省时不检查 |
+| `required` / `properties` | 只在值是对象时生效；`properties` 里的子 schema 递归校验 |
+| `additionalProperties` | **只识别字面 `false`**（多余字段即拒绝）；写成子 schema 对象形式**不会被执行** |
+| `items` / `minItems` / `maxItems` | 只在值是数组时生效 |
+| `minLength` / `maxLength` | 只在值是字符串时生效 |
+| `minimum` / `maximum` | 只对非 `bool` 数字生效；空 schema `{}` 直接放行 |
+
+每个 run 最多同时有 8 个 pending job，
 question/context/schema/result/evidence 也分别有硬大小上限。结果只进入 broker；bundle 仍需校验其世界前提与
 资源版本后才能采用。
 

@@ -36,6 +36,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install the pi CLI
-        run: npm install --global @earendil-works/pi-coding-agent
+      - name: Install the pi CLI (version verified in the local acceptance run)
+        run: npm install --global @earendil-works/pi-coding-agent@0.85.1
       - run: npm test

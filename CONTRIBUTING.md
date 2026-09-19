@@ -23,7 +23,8 @@ npm test               # 改到 extensions/ 或 package.json 时
 
 - 测试不得调用付费模型；需要验证真实形状时写显式脚本，并在 PR 里说明成本。
 - 新增行为要有对应测试：帧绑定被拒、四态回执、未决操作不重发、无效果动作收窄候选后仍能推进、
-  可逆循环以 `cycle_detected` 结束、verification unknown 不等于成功、reducer 纯性。
+  可逆循环在默认配置下挂起（`awaiting_evidence`）、升级到上限才以 `cycle_detected` 失败、
+  verification unknown 不等于成功、reducer 纯性。
 
 ## 设计约束（改动前先读 `AGENTS.md` 与 `docs/design.md`）
 

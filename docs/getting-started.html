@@ -172,8 +172,9 @@ bundle（你项目里的代码 + manifest）
   <table>
     <tr><th>需求</th><th>说明</th></tr>
     <tr><td>Python ≥ 3.12</td><td>运行时<strong>零第三方依赖</strong>（<code>dependencies = []</code>），只用标准库</td></tr>
+    <tr><td>Linux / macOS / WSL</td><td>host 的资源声明用 Unix 的 <code>fcntl</code>，Windows 需在 WSL 内跑</td></tr>
     <tr><td><a href="https://docs.astral.sh/uv/">uv</a>（推荐）或 pip</td><td>开发依赖只有 pytest 与 ruff</td></tr>
-    <tr><td>Node（可选）</td><td>只用于跑扩展侧的 RPC 测试 <code>npm test</code></td></tr>
+    <tr><td>Node ≥ 22</td><td>Node 是 pi 自身的依赖，也用于跑扩展侧的 RPC 测试 <code>npm test</code></td></tr>
     <tr><td>pi（可选）</td><td>只有走“在 pi 里用”这条路才需要</td></tr>
     <tr><td>TypeSafe / Jev API key（可选）</td><td>仓库内所有测试与 demo 都不联网、不需要 key；自己接真实 Jev 时才要</td></tr>
   </table>
@@ -188,11 +189,13 @@ uv sync</code></pre>
 
 <section id="path-a">
   <h2>3. 路径 A：当 Python 库用（不装 pi、不联网）</h2>
-  <p>先跑自带 demo 熟悉语义，三个场景分别演示“正常完成”“动作无效果后收窄候选”“可逆循环被命名失败”：</p>
+  <p>先跑自带 demo 熟悉语义，三个场景分别演示“正常完成”“动作无效果后收窄候选”“可逆循环被挂起等待新信息”：</p>
   <pre><code>uv run jev-loop-demo --scenario clean  # 正常收敛
 uv run jev-loop-demo --scenario noop   # 无效果动作 → 标死并收窄候选，继续推进
-uv run jev-loop-demo --scenario cycle  # 可逆循环 → cycle_detected，不烧满步数</code></pre>
-  <p><code>clean</code> 的实际输出：</p>
+uv run jev-loop-demo --scenario cycle  # 可逆循环 → suspended / awaiting_evidence，不烧满步数</code></pre>
+  <p>第三个场景不是失败：frame 重现且无可收窄动作时，内核直接挂起等新信息（<code>suspended / awaiting_evidence</code>）；
+  只有反复升级到上限才以 <code>cycle_detected</code> 结束——<code>README</code> 守卫表、<code>docs/design.md</code> 与
+  <code>tests/test_guards.py</code> 的两条测试分别覆盖这两条路径。以下是 <code>clean</code> 场景的实际输出：</p>
   <pre><code>status=succeeded stop_reason=None
 steps=3 executions=2 decisions=3 world={'a': True, 'b': True}
 verifications=['satisfied'] (only 'satisfied' counts as success)</code></pre>
@@ -290,7 +293,7 @@ pi -e https://github.com/kevin-zhan/jev-loop</code></pre>
 }</code></pre>
   <p>宿主会强制校验：manifest 必须在 <code>project_root</code> 内、<code>schema_version == 1</code>、
   <code>entrypoint</code> 形如 <code>module:function</code>、<code>python_path</code> 目录存在（相对 manifest 目录解析并插入 <code>sys.path</code>）。
-  <code>config</code> 是任意 JSON，运行时可由 <code>bundle_config</code> 覆盖。</p>
+  <code>config</code> 要求是 JSON <strong>object</strong>（宿主会 <code>dict(...)</code> 后与 <code>bundle_config</code> 合并），字符串或数字会被拒绝。</p>
   <div class="callout tip">
     <p><strong>路径不要猜。</strong>相对路径（<code>.venv/bin/python</code>、<code>.env</code>）要相对 manifest 的 <code>python_path</code> 解析，
     而不是宿主会话的当前目录——否则换一个目录启动就失败。</p>
@@ -313,7 +316,7 @@ class ManagedController(Protocol):
         <td>线程安全；只放有界、可 JSON 序列化的摘要（完整证据写 <code>run_dir/artifacts/</code>）</td></tr>
     <tr><td><code>update</code></td><td>coordinator 线程</td>
         <td>只在用户显式改目标/约束时被调用；不要用它偷偷改任务</td></tr>
-    <tr><td><code>request_stop</code></td><td>coordinator 线程</td>
+    <tr><td><code>request_stop</code></td><td>coordinator 线程（异常收尾路径下也可能由 engine 线程调用）</td>
         <td>线程安全、<strong>同步</strong>释放 held inputs；不得等模型或网络</td></tr>
   </table>
   <p>已经有内核 <code>Loop</code> 的话，直接用 <code>LoopController</code> 包起来即可（<code>on_wake</code>、<code>on_update</code>、
@@ -341,7 +344,11 @@ def build(spec, services, config):
 job = services.cognition.get(job_id)   # pending / completed / expired ...</code></pre>
   <ul>
     <li>每个 run 最多 8 个 pending job；question/context/schema/result/evidence 各有硬大小上限。</li>
-    <li>结果 schema 只支持 JSON Schema 的一个子集：<code>type · enum · const · required · properties · additionalProperties · items · minItems · maxItems · minLength · maxLength · minimum · maximum</code>。</li>
+    <li>结果 schema 只支持一个<strong>有限子集</strong>，不是完整 JSON Schema：<code>type</code>（integer/number 不接受 bool）、
+      <code>enum</code>/<code>const</code>（用相等比较，<code>1</code> 与 <code>true</code> 不区分）、<code>required</code>、
+      <code>properties</code>、<code>additionalProperties</code>（<b>仅字面 <code>false</code></b>，对象形式不执行）、
+      <code>items</code>、<code>minItems</code>/<code>maxItems</code>、<code>minLength</code>/<code>maxLength</code>、
+      <code>minimum</code>/<code>maximum</code>；空 schema 直接放行。</li>
     <li>结果只进 broker，<strong>bundle 仍要自己校验世界前提与资源版本</strong>后才能采用。</li>
     <li>运行时 cognition 的上下文是<em>不可信数据</em>，不是用户授权；不要执行里面夹带的指令。</li>
   </ul>

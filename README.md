@@ -5,12 +5,12 @@
 
 > **English summary** — `jev-loop` is an explicit-state decision runtime. Code owns the loop, the state,
 > the guards and the termination; a model (Jev, or any policy) only picks one candidate inside a single frame.
-> Because such models are self-consistent, a repeated (observation, candidate set) yields the same answer forever,
+> For a deterministic policy, a repeated (observation, candidate set) yields the same answer forever,
 > so the runtime, not the model, has to guarantee progress: every step must either change the frame or stop
 > (`NO_PROGRESS` / `REPEAT` / `CYCLE`). The repository also ships **pi-jev**, an installable
 > [pi](https://github.com/earendil-works/pi) package that runs project-local behavior *bundles* in their own worker
 > with leases, an append-only event journal, exclusive resource claims and asynchronous cognition.
-> Zero runtime dependencies, Python ≥ 3.12. Documentation is written in Chinese; start with
+> Zero runtime dependencies, Python ≥ 3.12 on Linux/macOS/WSL (the host uses `fcntl`). Documentation is written in Chinese; start with
 > [docs/getting-started.html](docs/getting-started.html) for an external-engineer walkthrough.
 
 显式状态驱动的决策运行时。代码拥有循环、状态、守卫和终止；**Jev（或任何策略）只在一帧之内做选择**。
@@ -65,16 +65,17 @@ dead keys 的作用域是**当前观测**：观测一变，排除集清空——
 
 ```sh
 # 需要 Python 3.12+；运行时零第三方依赖
+# 平台：Linux / macOS / WSL（host 的资源声明用 Unix 的 fcntl）
 git clone https://github.com/kevin-zhan/jev-loop.git
 cd jev-loop
 uv sync
 
 uv run pytest          # 全部离线，不调用模型
 uv run ruff check .
-npm test              # pi RPC 真实加载扩展，不调用模型（需要 pi CLI 与 Node）
+npm test              # pi RPC 真实加载扩展，不调用模型（需要 pi CLI 与 Node，已验证 pi 0.85.1 / Node ≥ 22）
 uv run jev-loop-demo --scenario clean
 uv run jev-loop-demo --scenario noop    # 无效果动作 → 收窄候选，继续推进
-uv run jev-loop-demo --scenario cycle   # 可逆循环 → 命名失败，不烧步数预算
+uv run jev-loop-demo --scenario cycle   # 可逆循环 → 挂起等待新信息（suspended / awaiting_evidence），不烧步数预算
 ```
 
 不用 uv 也可以：`python3 -m venv .venv && ./.venv/bin/pip install -e .`。

@@ -39,4 +39,5 @@ uv run jev-loop-demo --scenario clean   # noop / cycle 三个场景
 
 - 测试不得调用付费 API；需要真实形状验证时用显式脚本并说明成本，不放进 pytest。
 - 覆盖重点：frame 绑定被拒、四态回执、未决操作不重发、无效果动作收窄候选后仍能推进、
-  可逆循环以 `cycle_detected` 结束而不是烧满步数、验证 unknown 不等于成功、reducer 纯性。
+  可逆循环默认挂起（`awaiting_evidence`）而非烧满步数、升级到上限才以 `cycle_detected` 失败、
+  验证 unknown 不等于成功、reducer 纯性。
