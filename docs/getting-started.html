@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>把 jev-loop 拿去用 · 外部工程师上手说明</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1d1f21; --muted: #666b70; --line: #e3e2df;
+    --card: #fff; --code-bg: #f4f4f1; --code-fg: #23252a; --accent: #1a6b4a;
+    --accent-soft: #e8f3ed; --warn-bg: #fdf6e6; --warn-line: #e5c98a;
+    --danger-bg: #fdeeee; --danger-line: #e7b4b4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181a; --fg: #e6e6e3; --muted: #9aa0a6; --line: #303336;
+      --card: #1d2023; --code-bg: #101214; --code-fg: #dfe3e6; --accent: #7fd3ab;
+      --accent-soft: #1b2b25; --warn-bg: #2b2517; --warn-line: #5f5230;
+      --danger-bg: #2b1c1c; --danger-line: #6b4141;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+  }
+  .shell { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 40px;
+           max-width: 1180px; margin: 0 auto; padding: 32px 24px 96px; }
+  @media (max-width: 900px) { .shell { grid-template-columns: 1fr; gap: 8px; } nav.toc { position: static; max-height: none; } }
+  header { grid-column: 1 / -1; border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 8px; }
+  header h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -0.3px; }
+  header p { margin: 0; color: var(--muted); }
+  header .meta { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  code, pre, kbd { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: var(--code-bg); color: var(--code-fg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+  pre { position: relative; background: var(--code-bg); color: var(--code-fg); border: 1px solid var(--line);
+        border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: 13.5px; line-height: 1.6; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .copy { position: absolute; top: 8px; right: 8px; font-size: 12px; padding: 3px 8px; cursor: pointer;
+              background: var(--card); color: var(--muted); border: 1px solid var(--line); border-radius: 5px; }
+  pre .copy:hover { color: var(--accent); border-color: var(--accent); }
+  nav.toc { position: sticky; top: 28px; align-self: start; max-height: calc(100vh - 60px); overflow-y: auto;
+            font-size: 14px; border-left: 2px solid var(--line); padding-left: 14px; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; }
+  nav.toc li { margin: 7px 0; }
+  nav.toc a { color: var(--muted); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); }
+  main { min-width: 0; }
+  section { margin-bottom: 44px; scroll-margin-top: 20px; }
+  h2 { font-size: 22px; margin: 0 0 14px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 17px; margin: 26px 0 8px; }
+  h4 { font-size: 15px; margin: 18px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  p, li { color: var(--fg); }
+  .lede { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); font-weight: 600; }
+  .callout { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; padding: 12px 16px; margin: 14px 0; background: var(--card); }
+  .callout.tip { border-left-color: var(--accent); }
+  .callout.warn { border-left-color: var(--warn-line); background: var(--warn-bg); }
+  .callout.danger { border-left-color: var(--danger-line); background: var(--danger-bg); }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child { margin-bottom: 0; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px;
+         background: var(--accent-soft); color: var(--accent); border: 1px solid var(--line); margin-right: 6px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .card h4 { margin-top: 0; }
+  footer { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted); font-size: 13.5px; }
+  .kbd { font-size: 12.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; background: var(--card); }
+  .check { list-style: none; padding-left: 0; }
+  .check li { padding-left: 26px; position: relative; margin: 6px 0; }
+  .check li::before { content: "☐"; position: absolute; left: 4px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header>
+  <h1>把 jev-loop 拿去用</h1>
+  <p>从 GitHub 克隆之后，外部工程师如何跑起来、接进自己的项目、并写一个自己的 bundle。</p>
+  <div class="meta">
+    面向读者：会用 Python 3.12+、看得懂线程/进程与事件日志的后端或自动化工程师。
+    仓库文档与代码注释以中文为主。<br>
+    本文与源码对应版本：<code>jev-loop 0.2.0</code> / <code>pi-jev-loop 0.2.0</code>。
+  </div>
+</header>
+
+<nav class="toc">
+  <ol>
+    <li><a href="#what">0. 先判断要不要用</a></li>
+    <li><a href="#concepts">1. 它由哪几层组成</a></li>
+    <li><a href="#setup">2. 准备环境</a></li>
+    <li><a href="#path-a">3. 路径 A：当 Python 库用</a></li>
+    <li><a href="#path-b">4. 路径 B：在 pi 里用</a></li>
+    <li><a href="#path-c">5. 路径 C：接自己的宿主</a></li>
+    <li><a href="#bundle">6. 写自己的 bundle</a></li>
+    <li><a href="#safety">7. 生命周期与安全语义</a></li>
+    <li><a href="#verify">8. 验证与“完成”的口径</a></li>
+    <li><a href="#pitfalls">9. 常见坑</a></li>
+    <li><a href="#map">10. 目录地图</a></li>
+    <li><a href="#publish">11. 给仓库所有者的推送前清单</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="what">
+  <h2>0. 先判断要不要用</h2>
+  <p class="lede">一句话：<strong>把“决策”交给模型，“循环、状态、终止、验收”留给代码。</strong>
+  内核假设模型（Jev 或任何策略）对同一帧是确定性的——同样的观测与候选集，答案必然相同。所以只要出现
+  “同一帧又选同一个动作”，模型永远不会自己发现自己在打转，推进力必须由代码提供。</p>
+  <div class="grid2">
+    <div class="card">
+      <h4>适合</h4>
+      <ul>
+        <li>需要持续操作某个环境（浏览器、设备、工位、长流程），中间还要模型判断；</li>
+        <li>你担心“跑着跑着卡住 / 重复点同一个按钮 / 把模型的 DONE 当成功”；</li>
+        <li>需要可回放的事件日志、明确的资源独占、进程外的崩溃隔离；</li>
+        <li>主 agent 思考慢，而环境驱动必须继续跑（cognition job 异步问、不等）。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>不适合</h4>
+      <ul>
+        <li>一次性工具调用或纯问答；</li>
+        <li>需要多环境并行写、自动规划、子 loop——第一版内核明确不做；</li>
+        <li>想让模型自己规划整条流程：这里代码拥有循环，模型只在一帧里选动作。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="concepts">
+  <h2>1. 它由哪几层组成</h2>
+  <pre><code>你的宿主（pi / 自己的服务 / 调度器）
+  │  管理请求：start · inspect · events · heartbeat · update · stop · respond
+  ▼
+host（src/jev_loop/host/，每 run 一个 worker 进程）
+  │  events.jsonl 唯一真相 · 租约 · resourceKeys 独占 · cognition broker · bundle 契约
+  ▼
+bundle（你项目里的代码 + manifest）
+  └─ ManagedController：run / snapshot / update / request_stop
+       └─ 内核 Loop（可选）+ 你的环境 adapter
+            observe → offer → decide → validate → execute → reduce → guard</code></pre>
+  <table>
+    <tr><th>层</th><th>它负责</th><th>它不负责</th></tr>
+    <tr><td>内核 <code>core/</code></td>
+        <td>帧绑定（候选重编号 <code>a1..an</code>）、执行前重新校验、四态回执、三条空转守卫、纯 reducer、verifier 独立验收、各类硬预算</td>
+        <td>模型、网络、浏览器、pi；内核只依赖策略协议</td></tr>
+    <tr><td>宿主 <code>host/</code></td>
+        <td>幂等 start、独占资源声明、租约与超时、append-only 事件、停止两阶段、崩溃 quarantine、cognition broker</td>
+        <td>不知道你操作的是什么环境</td></tr>
+    <tr><td>适配层 <code>extensions/pi-jev.ts</code></td>
+        <td>把宿主接到 pi：<code>jev_loop</code> 工具、斜杠命令、cognition 投递、session heartbeat、TUI 独占确认</td>
+        <td>不含任何站点/设备适配器</td></tr>
+    <tr><td><strong>bundle</strong>（你写）</td>
+        <td>manifest + <code>ManagedController</code>；环境 adapter、真实证据、外部输入的释放确认</td>
+        <td>不碰事件日志、租约、资源 claim</td></tr>
+  </table>
+  <div class="callout tip">
+    <p><strong>命名提醒：</strong><code>jev-loop</code> 既指单环内核，也指“内核 + 宿主 + pi 扩展”这整个包；
+    工具叫 <code>jev_loop</code>，技能叫 <code>pi-jev</code>；<em>bundle 不是仓库里的组件</em>，而是项目侧行为包的契约名。</p>
+  </div>
+</section>
+
+<section id="setup">
+  <h2>2. 准备环境</h2>
+  <table>
+    <tr><th>需求</th><th>说明</th></tr>
+    <tr><td>Python ≥ 3.12</td><td>运行时<strong>零第三方依赖</strong>（<code>dependencies = []</code>），只用标准库</td></tr>
+    <tr><td><a href="https://docs.astral.sh/uv/">uv</a>（推荐）或 pip</td><td>开发依赖只有 pytest 与 ruff</td></tr>
+    <tr><td>Node（可选）</td><td>只用于跑扩展侧的 RPC 测试 <code>npm test</code></td></tr>
+    <tr><td>pi（可选）</td><td>只有走“在 pi 里用”这条路才需要</td></tr>
+    <tr><td>TypeSafe / Jev API key（可选）</td><td>仓库内所有测试与 demo 都不联网、不需要 key；自己接真实 Jev 时才要</td></tr>
+  </table>
+  <pre><code>git clone https://github.com/&lt;owner&gt;/jev-loop.git
+cd jev-loop
+uv sync</code></pre>
+  <p>不用 uv 也可以（包没有运行时依赖）：</p>
+  <pre><code>python3 -m venv .venv
+./.venv/bin/pip install -e .
+./.venv/bin/jev-loop-demo --scenario clean</code></pre>
+</section>
+
+<section id="path-a">
+  <h2>3. 路径 A：当 Python 库用（不装 pi、不联网）</h2>
+  <p>先跑自带 demo 熟悉语义，三个场景分别演示“正常完成”“动作无效果后收窄候选”“可逆循环被命名失败”：</p>
+  <pre><code>uv run jev-loop-demo --scenario clean  # 正常收敛
+uv run jev-loop-demo --scenario noop   # 无效果动作 → 标死并收窄候选，继续推进
+uv run jev-loop-demo --scenario cycle  # 可逆循环 → cycle_detected，不烧满步数</code></pre>
+  <p><code>clean</code> 的实际输出：</p>
+  <pre><code>status=succeeded stop_reason=None
+steps=3 executions=2 decisions=3 world={'a': True, 'b': True}
+verifications=['satisfied'] (only 'satisfied' counts as success)</code></pre>
+  <p>接自己的环境，只需要实现三个角色——环境、策略、验证器：</p>
+  <pre><code>from jev_loop import Loop, TaskSpec
+from jev_loop.policies.jev import JevPolicy, http_request_fn
+
+loop = Loop(
+    task=TaskSpec(
+        goal="开启深色模式",
+        success_criteria=("设置页显示深色模式已开启",),
+    ),
+    environment=my_adapter,                       # observe / offer / execute / query / validate
+    policy=JevPolicy(request_fn=http_request_fn(api_key=os.environ["TYPESAFE_API_KEY"])),
+    verifier=my_verifier,                         # 独立证据；不接受模型的 DONE
+)
+result = loop.run()
+print(result.status, result.stop_reason)</code></pre>
+  <p>要点：</p>
+  <ul>
+    <li>策略返回的候选 id <strong>只在本帧有效</strong>；循环在执行前会重新校验观测 revision 与前置条件。</li>
+    <li><code>JevPolicy</code> 每次决策发一次请求到 <code>https://api.typesafe.ai/v1/systemone</code>；<code>http_request_fn</code> 是全仓唯一碰网络的地方，便于替换成假 requester 做离线测试。</li>
+    <li>环境 adapter 承诺三件事：能给什么观测、能执行哪些动作、未决操作怎么查询。内核不假设任何环境细节。</li>
+  </ul>
+</section>
+
+<section id="path-b">
+  <h2>4. 路径 B：在 pi 里用（pi-jev 扩展）</h2>
+  <p>仓库根就是一个 pi package（<code>package.json</code> 声明了 <code>extensions/pi-jev.ts</code> 与 <code>skills/pi-jev</code>）。</p>
+  <pre><code># 从 GitHub 直接装（建议钉版本，便于复现）
+pi install git:github.com/&lt;owner&gt;/jev-loop@v0.2.0
+
+# 或者临时试一把，不写设置
+pi -e https://github.com/&lt;owner&gt;/jev-loop</code></pre>
+  <p>装好后在 pi 里 <code>/reload</code>；它提供：</p>
+  <table>
+    <tr><th>入口</th><th>用途</th></tr>
+    <tr><td><code>jev_loop</code> 工具</td><td><code>start / list / inspect / events / update / respond / stop / release_resources</code></td></tr>
+    <tr><td><code>/jev-runs</code></td><td>看当前 session 拥有的 run</td></tr>
+    <tr><td><code>/jev-self-test</code></td><td>离线跑一遍真实进程验收（认知等待期间继续推进、结束后释放输入）</td></tr>
+    <tr><td><code>/jev-stop-all</code></td><td>交互确认后停止本 session 的全部活动 run</td></tr>
+    <tr><td><code>pi-jev</code> skill</td><td>教 agent 何时用、怎么处理 cognition、怎么验收</td></tr>
+  </table>
+  <ul>
+    <li>扩展默认用 <code>python3</code>；别的解释器用 <code>JEV_LOOP_PYTHON=/path/to/python3.12</code> 指定。</li>
+    <li>扩展会把 <code>&lt;pkg&gt;/src</code> 加进子进程 <code>PYTHONPATH</code>，<strong>因此不需要安装 Python 包</strong>，只要系统里有 Python 3.12+。</li>
+    <li>启动一个 run 时要给：<code>bundle</code>（项目内 manifest）、<code>goal</code>、<code>inputs</code>、<code>resourceKeys</code>、<code>idempotencyKey</code>、<code>maxRuntimeSeconds</code>。任务内容经 stdin 传输，不进 shell 参数。</li>
+  </ul>
+  <div class="callout warn">
+    <p>pi package 以完整系统权限运行扩展代码。安装第三方 package 前先读源码；本仓的 bundle manifest 同样是<em>代码信任边界</em>，宿主只接受当前项目目录内的 manifest。</p>
+  </div>
+</section>
+
+<section id="path-c">
+  <h2>5. 路径 C：接自己的宿主</h2>
+  <p>不依赖 pi 也能用。宿主 API 从 <code>jev_loop.host</code> 导出，命令行入口 <code>jev-loop-host</code> 提供
+  <code>rpc</code>（stdin 收一个 JSON、stdout 回一个 JSON）与内部 <code>worker</code>：</p>
+  <pre><code>echo '{
+  "action": "start",
+  "owner_id": "engineer-or-service-id",
+  "idempotency_key": "daily-check-2026-09-20",
+  "project_root": "/srv/my-project",
+  "bundle": "/srv/my-project/.jev/bundles/my-bundle/bundle.json",
+  "task": {"goal": "检查站点并留下证据", "inputs": {"date": "2026-09-20"}},
+  "resource_keys": ["browser:work-profile"],
+  "max_runtime_seconds": 600
+}' | uv run jev-loop-host rpc</code></pre>
+  <table>
+    <tr><th>action</th><th>必须字段</th></tr>
+    <tr><td><code>start</code></td><td><code>owner_id · idempotency_key · project_root · bundle · task.goal</code></td></tr>
+    <tr><td><code>list</code> / <code>inspect</code></td><td><code>owner_id</code>（+ <code>run_id</code>）</td></tr>
+    <tr><td><code>events</code></td><td><code>owner_id · run_id</code>，可选 <code>after</code>（游标）与 <code>limit</code>（≤500）</td></tr>
+    <tr><td><code>heartbeat</code> / <code>update</code> / <code>stop</code> / <code>respond</code></td><td>转成对 run 的命令；<code>respond</code> 需 <code>run_id · job_id · expected_job_version</code></td></tr>
+    <tr><td><code>release_resources</code></td><td>仅在独立确认外部输入已释放后使用（见第 7 节）</td></tr>
+  </table>
+  <ul>
+    <li><strong>幂等</strong>：<code>(owner_id, project_root, idempotency_key)</code> 唯一映射一个 run，重复调用不会重启控制器。</li>
+    <li><strong>租约</strong>：非 detached run 默认 30 秒，需要你的宿主定期 heartbeat；不 heartbeat 会让 worker 请求停止并释放输入。</li>
+    <li><strong>状态在磁盘上</strong>，不在你的会话历史里：默认 <code>~/.local/state/jev-loop/</code>，用 <code>JEV_LOOP_HOME</code> 改写。会话压缩、reload 都不会重放动作。</li>
+  </ul>
+</section>
+
+<section id="bundle">
+  <h2>6. 写自己的 bundle</h2>
+  <p>契约正文在 <code>docs/pi-integration.md</code> 的 “Bundle manifest” 一节；可运行的模板是
+  <code>examples/bundles/switchboard/</code>（manifest + 24 行 controller，已被
+  <code>tests/test_host_service.py</code> 真实加载）。最小清单如下。</p>
+
+  <h3>6.1 manifest</h3>
+  <pre><code>{
+  "schema_version": 1,
+  "entrypoint": "controller:build",
+  "python_path": ".",
+  "config": {"adapter": "project-specific settings"}
+}</code></pre>
+  <p>宿主会强制校验：manifest 必须在 <code>project_root</code> 内、<code>schema_version == 1</code>、
+  <code>entrypoint</code> 形如 <code>module:function</code>、<code>python_path</code> 目录存在（相对 manifest 目录解析并插入 <code>sys.path</code>）。
+  <code>config</code> 是任意 JSON，运行时可由 <code>bundle_config</code> 覆盖。</p>
+  <div class="callout tip">
+    <p><strong>路径不要猜。</strong>相对路径（<code>.venv/bin/python</code>、<code>.env</code>）要相对 manifest 的 <code>python_path</code> 解析，
+    而不是宿主会话的当前目录——否则换一个目录启动就失败。</p>
+  </div>
+
+  <h3>6.2 controller 四个方法</h3>
+  <pre><code>def build(spec: RunSpec, services: RuntimeServices, config: dict) -&gt; ManagedController:
+    ...
+
+class ManagedController(Protocol):
+    def run(self, stop_event: threading.Event) -&gt; ControllerResult: ...
+    def snapshot(self) -&gt; Mapping[str, Json]: ...
+    def update(self, task: Mapping[str, Json], patch: Mapping[str, Json]) -&gt; None: ...
+    def request_stop(self, reason: str) -&gt; None: ...</code></pre>
+  <table>
+    <tr><th>方法</th><th>线程/时机</th><th>你必须保证</th></tr>
+    <tr><td><code>run</code></td><td>engine 线程</td>
+        <td>返回 terminal 的 <code>ControllerResult</code>；只有确认所有外部输入已释放时 <code>resources_released=True</code>，强杀子进程等不确定路径必须 <code>False</code></td></tr>
+    <tr><td><code>snapshot</code></td><td>coordinator 线程</td>
+        <td>线程安全；只放有界、可 JSON 序列化的摘要（完整证据写 <code>run_dir/artifacts/</code>）</td></tr>
+    <tr><td><code>update</code></td><td>coordinator 线程</td>
+        <td>只在用户显式改目标/约束时被调用；不要用它偷偷改任务</td></tr>
+    <tr><td><code>request_stop</code></td><td>coordinator 线程</td>
+        <td>线程安全、<strong>同步</strong>释放 held inputs；不得等模型或网络</td></tr>
+  </table>
+  <p>已经有内核 <code>Loop</code> 的话，直接用 <code>LoopController</code> 包起来即可（<code>on_wake</code>、<code>on_update</code>、
+  <code>release</code>、<code>snapshot_extra</code> 是可选钩子）：</p>
+  <pre><code>from jev_loop import Loop, TaskSpec
+from jev_loop.host import LoopController
+
+def build(spec, services, config):
+    environment = MyEnvironment(config)
+    loop = Loop(task=TaskSpec(goal=str(spec.task["goal"]), inputs=dict(spec.task.get("inputs") or {})),
+                environment=environment, policy=my_policy, verifier=MyVerifier(environment))
+    return LoopController(loop, services, snapshot_extra=lambda: {"world": environment.summary()})</code></pre>
+
+  <h3>6.3 边跑边问模型（runtime cognition）</h3>
+  <p>不要在 <code>run()</code> 里阻塞等宿主回话。发起 job <strong>立即返回</strong>，继续干别的，稍后轮询：</p>
+  <pre><code>job_id = services.cognition.request(
+    "已有候选偏向吃喝，下一轮应补哪些搜索方向？",
+    context={"candidate_summary": summary},
+    output_schema={"type": "object", "required": ["search_terms"]},
+    resource_keys=("research-plan",),
+    deadline_seconds=90,
+    dedupe_key="diversify-search",
+)
+# ... 继续运行 ...
+job = services.cognition.get(job_id)   # pending / completed / expired ...</code></pre>
+  <ul>
+    <li>每个 run 最多 8 个 pending job；question/context/schema/result/evidence 各有硬大小上限。</li>
+    <li>结果 schema 只支持 JSON Schema 的一个子集：<code>type · enum · const · required · properties · additionalProperties · items · minItems · maxItems · minLength · maxLength · minimum · maximum</code>。</li>
+    <li>结果只进 broker，<strong>bundle 仍要自己校验世界前提与资源版本</strong>后才能采用。</li>
+    <li>运行时 cognition 的上下文是<em>不可信数据</em>，不是用户授权；不要执行里面夹带的指令。</li>
+  </ul>
+
+  <h3>6.4 离线测试</h3>
+  <p>照 <code>tests/test_host_service.py::test_project_bundle_runs_the_existing_loop_kernel</code> 的写法：用临时
+  <code>JEV_LOOP_HOME</code> 真实 <code>start()</code> 你的 manifest，再 inspect 状态。测试不得调用付费 API。</p>
+</section>
+
+<section id="safety">
+  <h2>7. 生命周期与安全语义</h2>
+  <table>
+    <tr><th>语义</th><th>行为</th></tr>
+    <tr><td>Start 幂等</td><td><code>owner session + project root + idempotency key</code> 唯一映射一个 run；重复调用返回同一个 run</td></tr>
+    <tr><td>独占资源</td><td><code>resourceKeys</code>（如 <code>browser:work-profile</code>）在 host 内原子声明，活动 run 之间不能重复占有</td></tr>
+    <tr><td>Session owner</td><td>管理命令与 cognition 回复必须来自创建 run 的 session；换 session 不继承控制权</td></tr>
+    <tr><td>Detached</td><td>必须 TUI 直接确认才能创建，且仍受 <code>maxRuntimeSeconds</code> 约束</td></tr>
+    <tr><td>Stop 两阶段</td><td><code>accepted</code> 只表示收到停止意图；<strong>terminal status + <code>resources_released=true</code></strong> 才证明输入已释放</td></tr>
+    <tr><td>崩溃隔离</td><td>worker 异常消失且无法确认释放时，claim 保持 quarantined，不会被下一个 run 自动抢走；必须人工独立核实后用 <code>release_resources</code> 清除</td></tr>
+    <tr><td>单写所有权</td><td>run 活动时，agent/宿主不得直接操作同一 <code>resourceKeys</code>；host 只能约束注册过的 run，挡不住绕过它的外部程序</td></tr>
+  </table>
+  <div class="callout danger">
+    <p><strong>进程外 watchdog 是第一道保护。</strong>Python 进程被 <code>SIGKILL</code> 时任何 cleanup 都不保证执行；
+    真实设备必须另有一层 watchdog。不要把 cookie、token、原始隐私资料写进 event 或 snapshot。</p>
+  </div>
+</section>
+
+<section id="verify">
+  <h2>8. 验证与“完成”的口径</h2>
+  <p>在克隆下来的仓库里，这三条命令应当全绿（离线，不调用模型；本文实测：pytest 65 passed、ruff
+  <code>All checks passed!</code>、npm test 1 pass）：</p>
+  <pre><code>uv run pytest              # 内核 + 宿主 + bundle 契约，全部离线
+uv run ruff check .
+npm test                   # pi RPC 真实加载扩展，不调用模型</code></pre>
+  <p>判断一次 run 成功，看这四件事，而不是进程还活着：</p>
+  <ol>
+    <li><code>inspect</code> 的 <code>status</code> 是 terminal 的 <code>succeeded</code>（<code>failed</code>/<code>cancelled</code> 各自有 <code>stop_reason</code>）；</li>
+    <li><code>resources_released: true</code>；</li>
+    <li>bundle 自己的证据（<code>run_dir/artifacts/</code>）里 verifier 给出 <code>satisfied</code>；</li>
+    <li>事件日志 <code>events.jsonl</code> 能解释它是怎么走到这一步的。</li>
+  </ol>
+  <div class="callout warn">
+    <p>“工具调用返回了” ≠ “动作生效了” ≠ “任务完成了”。内核把这三件事分别记录：动作回执四态
+    <code>completed / rejected / pending / unknown</code>；<code>request_finish</code> 只是请求验证，只有 verifier
+    的 <code>satisfied</code> 才算成功，<code>unknown</code> 保持 unknown。</p>
+  </div>
+</section>
+
+<section id="pitfalls">
+  <h2>9. 常见坑</h2>
+  <ul>
+    <li><strong>不要为了“更顺畅”移除守卫</strong>（无效果 / 重复 / 循环）。确定性策略下它们是唯一的逃生阀：一步要么改变帧，要么停下来。</li>
+    <li><strong>别把模型的 DONE 当验收</strong>：策略只能 <code>request_finish</code>，verifier 才说了算。</li>
+    <li><strong>pending / unknown 只许查询，不许重发</strong>；<code>idempotency=NONE</code> 的动作永远不能盲目重试。</li>
+    <li><strong>帧绑定</strong>：只能返回本帧的候选 id，不要自己拼动作名或 URL；内核会拒绝越权候选。</li>
+    <li><strong>dead_actions 作用域是当前观测</strong>：观测一变就清空，别在外面自己维护“永久黑名单”。</li>
+    <li><strong>候选覆盖问题内核发现不了</strong>：正确动作不在候选集里，只能靠 adapter 与评测；内核提供 <code>complete</code> 标记与 <code>blocked</code> 出口。</li>
+    <li><strong>观测有延迟</strong>：动作效果晚于观测会被判一次 no-effect 并标死；这是有意的保守策略，效果出现后会自动回到候选集。</li>
+    <li><strong>第一版只支持单环境、单写执行</strong>；同一 <code>resourceKeys</code> 想并行写请先拆成不同资源。</li>
+  </ul>
+</section>
+
+<section id="map">
+  <h2>10. 目录地图</h2>
+  <table>
+    <tr><th>路径</th><th>内容</th></tr>
+    <tr><td><code>src/jev_loop/core/</code></td><td>state、events、reduce、frame、guards、loop —— 显式状态内核</td></tr>
+    <tr><td><code>src/jev_loop/policies/</code></td><td><code>scripted</code>（离线确定性）、<code>jev</code>（问题构建与答案解析，唯一碰网络处）</td></tr>
+    <tr><td><code>src/jev_loop/adapters/</code>、<code>verifiers/</code>、<code>stores/</code></td><td>可注入故障的 mock 环境、谓词验证器、内存 / JSONL 事件存储</td></tr>
+    <tr><td><code>src/jev_loop/host/</code></td><td>managed host：租约、认知 broker、bundle contract、事件与命令交换</td></tr>
+    <tr><td><code>extensions/pi-jev.ts</code></td><td>pi 工具面、后台事件投递、session heartbeat</td></tr>
+    <tr><td><code>skills/pi-jev/</code></td><td>agent 使用手册（何时用、怎么处理 cognition、怎么验收）</td></tr>
+    <tr><td><code>examples/bundles/switchboard/</code></td><td>最小 bundle 模板（本仓测试会真实加载它）</td></tr>
+    <tr><td><code>docs/design.md</code>、<code>docs/pi-integration.md</code></td><td>内核不变量与守卫语义；pi 集成 / bundle 契约正文</td></tr>
+    <tr><td><code>tests/</code></td><td>全部离线；<code>tests/pi-extension/</code> 用 pi RPC 真实加载扩展</td></tr>
+    <tr><td><code>~/.local/state/jev-loop/runs/&lt;run-id&gt;/</code></td><td>运行时数据：<code>spec.json · events.jsonl · status.json · inbox/ acks/ · artifacts/</code></td></tr>
+  </table>
+</section>
+
+<section id="publish">
+  <h2>11. 给仓库所有者的推送前清单</h2>
+  <p>这一节不是给使用者的，是这份说明成立的前提：</p>
+  <ul class="check">
+    <li><strong>加 LICENSE</strong>：仓库当前没有许可证文件；没有它，别人在法律上无权复用。</li>
+    <li><strong>决定 <code>spec/</code> 的去留</strong>：它目前<em>未被 Git 跟踪</em>（<code>git status</code> 显示 <code>?? spec/</code>），推送后不会出现在 GitHub。</li>
+    <li><strong>清理绝对路径示例</strong>：<code>docs/pi-integration.md</code> 与 <code>AGENTS.md</code> 里有 <code>/Users/&lt;你&gt;/…</code> 形式的安装示例，建议换成 <code>&lt;pkg&gt;</code> 或相对路径。</li>
+    <li><strong>确认没有密钥与私有数据</strong>：仓库内测试与 demo 都不需要 key；<code>.gitignore</code> 已排除 <code>.venv/ .env .env.* artifacts/</code> 等，推送前仍应 <code>git grep -i</code> 一遍 token、cookie、内网地址。</li>
+    <li><strong>加一条 CI</strong>：<code>uv run pytest &amp;&amp; uv run ruff check . &amp;&amp; npm test</code>，让“克隆下来就能验证”这句话有保障。</li>
+    <li><strong>在 <code>package.json</code> 里补 <code>repository</code> / <code>homepage</code></strong>（可选），便于 <code>pi install</code> 后溯源。</li>
+    <li><strong>告知读者文档语言</strong>：README、注释与本文以中文为主，英文读者需要翻译或自带模型阅读。</li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  <p>本文只做上手说明；任何“性能提升”“比 X 快 N 倍”的说法都应以你自己环境下的同条件实测为准，
+  仓库文档里记录的实测数字都注明了条件与日期。</p>
+</footer>
+
+</div>
+
+<script>
+  document.querySelectorAll('pre').forEach(function (pre) {
+    var btn = document.createElement('button');
+    btn.className = 'copy';
+    btn.type = 'button';
+    btn.textContent = '复制';
+    btn.addEventListener('click', function () {
+      var text = pre.querySelector('code') ? pre.querySelector('code').innerText : pre.innerText;
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = '已复制';
+        setTimeout(function () { btn.textContent = '复制'; }, 1200);
+      }, function () { btn.textContent = '复制失败'; });
+    });
+    pre.appendChild(btn);
+  });
+</script>
+</body>
+</html>
