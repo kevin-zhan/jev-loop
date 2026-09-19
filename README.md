@@ -10,6 +10,10 @@ observe → offer → decide → validate → execute → reduce → guard
    └───────────────────────────────────────────────────────┘
 ```
 
+仓库同时提供 **pi-jev**：一个可安装的 pi package，把项目内行为 bundle 放进有租约、持久事件日志、独占资源
+声明和异步 cognition 的独立 worker 中。主 agent 可以慢思考，而 bundle 的 driver 继续运行。它不是 pi fork，
+也不包含任何特定网站/设备适配器。见 [`docs/pi-integration.md`](docs/pi-integration.md)。
+
 ## 为什么值得单独做一层
 
 Jev 是**自我一致**的：同一个 frame 会得到同一个答案，而且没有采样随机性可以逃出重复。（见
@@ -50,6 +54,7 @@ dead keys 的作用域是**当前观测**：观测一变，排除集清空——
 uv sync
 uv run pytest          # 全部离线，不调用模型
 uv run ruff check .
+npm test              # pi RPC 真实加载扩展，不调用模型
 uv run jev-loop-demo --scenario clean
 uv run jev-loop-demo --scenario noop    # 无效果动作 → 收窄候选，继续推进
 uv run jev-loop-demo --scenario cycle   # 可逆循环 → 命名失败，不烧步数预算
@@ -81,11 +86,16 @@ src/jev_loop/policies/ scripted（离线/确定性）、jev（问题构建与答
 src/jev_loop/adapters/ mock（可注入故障的确定性环境）
 src/jev_loop/verifiers/predicate（确定性验证器）
 src/jev_loop/stores/   内存与 JSONL 事件存储
+src/jev_loop/host/     managed host、租约、认知 broker、bundle contract
+extensions/            pi 工具、后台事件投递与 session heartbeat
+skills/pi-jev/         agent 使用手册
+examples/bundles/      project bundle 示例
 ```
 
 ## 边界
 
-- 第一版只支持**单环境、单写执行**；没有多环境并行写、没有自动规划、没有子 loop。
-- `mock` 是测试环境，不是产品依赖；真实适配器（浏览器/手机）不在本仓。
+- 内核第一版只支持**单环境、单写执行**；没有多环境并行写、没有自动规划、没有子 loop。
+- managed host 可以同时管理不同资源的 run，但每个 `resourceKeys` 只允许一个活动 owner；它不会把一个内核变成多写。
+- `mock` 和内建 `diagnostic` 都是测试环境，不是产品适配器；真实适配器（浏览器/手机）不在本仓。
 - 候选覆盖问题（正确动作根本不在候选集里）由适配器和评测负责，内核只提供 `complete` 标记与
   `blocked` 出口，不能替它发现。

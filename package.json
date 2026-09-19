@@ -1,0 +1,26 @@
+{
+  "name": "pi-jev-loop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Managed Jev Loop runtime bridge for pi",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./extensions/pi-jev.ts"
+    ],
+    "skills": [
+      "./skills/pi-jev"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "test": "node --test tests/pi-extension/*.test.mjs"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "entrypoint": "controller:build",
+  "python_path": ".",
+  "config": {
+    "switches": {
+      "research": false,
+      "evidence": false
+    },
+    "required": {
+      "research": true,
+      "evidence": true
+    }
+  }
+}

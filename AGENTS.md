@@ -11,7 +11,8 @@
 ## 边界
 
 - 内核（`src/jev_loop/core/`）不得依赖 Jev、HTTP、浏览器或时钟之外的外部状态；所有模型相关代码在
-  `src/jev_loop/policies/`。新增环境行为放适配器，不放核心。
+  `src/jev_loop/policies/`。新增环境行为放适配器，不放核心。pi 生命周期和 cognition bridge 只放
+  `src/jev_loop/host/`、`extensions/` 与 bundle，不反向污染内核。
 - 状态的唯一真相是**事件**：任何状态变化都必须经由 `core/events.py` 的事件与 `core/reduce.py` 的
   纯 reducer。禁止直接改 `RuntimeState`，禁止在 reducer 里做 I/O 或调用模型。
 - 策略返回的候选 id 只在本帧内有效；执行前必须重新校验观测与前置条件。`request_finish` 只是请求验证，
@@ -19,8 +20,11 @@
 - 不要移除守卫（无效果 / 重复 / 循环）来"让循环更顺畅"：它们是确定性策略下唯一的逃生阀。
   改动守卫语义必须同时改测试与 `README.md` 的守卫表。
 - `pending` / `unknown` 的操作只许查询不许重发；`idempotency=NONE` 的动作永远不能盲目重试。
-- 不把真实 API key、cookie、页面登录态写进代码或测试；联网代码只允许出现在
-  `policies/jev.py` 的 `http_request_fn`。
+- 不把真实 API key、cookie、页面登录态写进代码或测试；内核的联网代码只允许出现在
+  `policies/jev.py` 的 `http_request_fn`。bundle 自己的联网适配必须留在 bundle，并避免把秘密写进 host event/snapshot。
+- Managed controller 的 `request_stop` 必须线程安全并同步释放 held inputs；真实设备还必须有进程外 watchdog。
+  `accepted` 不是停止确认，只有 terminal status、`resources_released=true` 加执行器确认才算停下；worker
+  异常消失时 resource claim 保持 quarantine，不能自动让新 run 接管。
 
 ## 验证
 
@@ -28,6 +32,8 @@
 uv sync
 uv run pytest          # 全部离线：mock 环境 + 确定性策略 + 假 requester
 uv run ruff check .
+npm test                                # pi RPC 真实加载，不调用模型
+node --experimental-strip-types --check extensions/pi-jev.ts
 uv run jev-loop-demo --scenario clean   # noop / cycle 三个场景
 ```
 
