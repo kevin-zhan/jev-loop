@@ -1,0 +1,30 @@
+[project]
+name = "jev-loop"
+version = "0.1.0"
+description = "Explicit-state decision runtime: code owns the loop, Jev only chooses within a frame"
+requires-python = ">=3.12"
+dependencies = []
+[project.scripts]
+jev-loop-demo = "jev_loop.demo:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest>=8,<9", "ruff>=0.14,<1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jev_loop"]
+
+[tool.ruff]
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
