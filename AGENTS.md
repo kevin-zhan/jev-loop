@@ -1,6 +1,6 @@
 # Jev Loop
 
-先读 `/Users/mengxiao/workspace/AGENTS.md`。本仓是独立项目，自带 Git 与依赖。
+本仓是独立项目，自带 Git 与依赖；工作前先读本文件与 `README.md`。
 
 ## 这个项目是什么
 

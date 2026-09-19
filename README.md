@@ -1,5 +1,18 @@
 # jev-loop
 
+[![CI](https://github.com/kevin-zhan/jev-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/kevin-zhan/jev-loop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+> **English summary** — `jev-loop` is an explicit-state decision runtime. Code owns the loop, the state,
+> the guards and the termination; a model (Jev, or any policy) only picks one candidate inside a single frame.
+> Because such models are self-consistent, a repeated (observation, candidate set) yields the same answer forever,
+> so the runtime, not the model, has to guarantee progress: every step must either change the frame or stop
+> (`NO_PROGRESS` / `REPEAT` / `CYCLE`). The repository also ships **pi-jev**, an installable
+> [pi](https://github.com/earendil-works/pi) package that runs project-local behavior *bundles* in their own worker
+> with leases, an append-only event journal, exclusive resource claims and asynchronous cognition.
+> Zero runtime dependencies, Python ≥ 3.12. Documentation is written in Chinese; start with
+> [docs/getting-started.html](docs/getting-started.html) for an external-engineer walkthrough.
+
 显式状态驱动的决策运行时。代码拥有循环、状态、守卫和终止；**Jev（或任何策略）只在一帧之内做选择**。
 
 它回答的问题是：`state + questions → 结构化答案` 之外的那部分——谁执行、谁记状态、谁保证不空转——应该长什么样。
@@ -51,14 +64,40 @@ dead keys 的作用域是**当前观测**：观测一变，排除集清空——
 ## 安装与验证
 
 ```sh
+# 需要 Python 3.12+；运行时零第三方依赖
+git clone https://github.com/kevin-zhan/jev-loop.git
+cd jev-loop
 uv sync
+
 uv run pytest          # 全部离线，不调用模型
 uv run ruff check .
-npm test              # pi RPC 真实加载扩展，不调用模型
+npm test              # pi RPC 真实加载扩展，不调用模型（需要 pi CLI 与 Node）
 uv run jev-loop-demo --scenario clean
 uv run jev-loop-demo --scenario noop    # 无效果动作 → 收窄候选，继续推进
 uv run jev-loop-demo --scenario cycle   # 可逆循环 → 命名失败，不烧步数预算
 ```
+
+不用 uv 也可以：`python3 -m venv .venv && ./.venv/bin/pip install -e .`。
+
+### 在 pi 里用（pi-jev）
+
+```sh
+pi install git:github.com/kevin-zhan/jev-loop@v0.2.0   # 钉版本，便于复现
+pi -e https://github.com/kevin-zhan/jev-loop           # 或临时试用，不写设置
+```
+
+扩展默认调用 `python3`（用 `JEV_LOOP_PYTHON` 指定其他解释器），并把本包 `src/` 加进子进程
+`PYTHONPATH`，因此不需要单独安装 Python 包。装好后提供 `jev_loop` 工具、`/jev-runs`、`/jev-self-test`、
+`/jev-stop-all` 与 `pi-jev` skill。
+
+外部工程师的完整上手说明（三条使用路径、bundle 契约、安全语义、常见坑）见
+**[docs/getting-started.html](docs/getting-started.html)**。
+
+### 不依赖 pi 的宿主
+
+`jev-loop-host rpc` 从 stdin 读一个 JSON 请求、往 stdout 写一个 JSON 回应，动作包括
+`start / list / inspect / events / heartbeat / update / stop / respond / release_resources`，
+宿主 API 从 `jev_loop.host` 导出。
 
 ## 接真实环境与真实 Jev
 
@@ -90,6 +129,9 @@ src/jev_loop/host/     managed host、租约、认知 broker、bundle contract
 extensions/            pi 工具、后台事件投递与 session heartbeat
 skills/pi-jev/         agent 使用手册
 examples/bundles/      project bundle 示例
+docs/                  设计不变量、pi 集成与 bundle 契约、外部上手指南（HTML）
+spec/                  问题与 state 的线上规范（v0.1）及标准 fixture
+tests/                 全离线测试；tests/pi-extension/ 用 pi RPC 真实加载扩展
 ```
 
 ## 边界
@@ -99,3 +141,8 @@ examples/bundles/      project bundle 示例
 - `mock` 和内建 `diagnostic` 都是测试环境，不是产品适配器；真实适配器（浏览器/手机）不在本仓。
 - 候选覆盖问题（正确动作根本不在候选集里）由适配器和评测负责，内核只提供 `complete` 标记与
   `blocked` 出口，不能替它发现。
+
+## 贡献与许可
+
+- 贡献流程、开发约束与验证命令见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 本项目以 [MIT 许可证](LICENSE) 发布；Issue 与 PR 都在 GitHub 上处理。

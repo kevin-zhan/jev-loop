@@ -22,14 +22,14 @@ managed host (one worker process per run)
 Python 源码通过受控的 `PYTHONPATH` 传给子进程，不需要把本包安装到全局环境。
 
 ```sh
-pi install /Users/mengxiao/workspace/projects/jev-loop
+pi install git:github.com/kevin-zhan/jev-loop
 # 已打开的 pi 会话执行 /reload；或重启 pi
 ```
 
 不写设置的临时试用：
 
 ```sh
-pi -e /Users/mengxiao/workspace/projects/jev-loop
+pi -e https://github.com/kevin-zhan/jev-loop
 ```
 
 安装后提供：

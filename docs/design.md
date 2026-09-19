@@ -51,3 +51,11 @@ Jev 是自我一致的：同一个 frame 会得到同一个答案，且没有采
 - 观测延迟（动作效果晚于观测）会被判成一次 no-effect；这是有意的保守策略：宁可标死一次，
   也不重复提交。效果随后出现时观测 revision 改变，该动作自动回到候选集。
 - 循环本身不产生正确性：每个候选仍可能被语义上选错，最终结论仍要靠 verifier 独立核对。
+
+## 相关文档
+
+- [`spec/questions.md`](../spec/questions.md)、[`spec/state.md`](../spec/state.md)：发给模型的 question 与
+  state 的线上规范（v0.1），含每条规则的来源与尺寸上限；[`spec/fixture-dark-mode.json`](../spec/fixture-dark-mode.json)
+  是同一份规范的标准 fixture。内核当前实现是该规范的一个子集，映射表在 `state.md` 末尾。
+- [`pi-integration.md`](pi-integration.md)：managed host / bundle 契约 / cognition 与生命周期语义。
+- [`getting-started.html`](getting-started.html)：外部工程师上手说明。

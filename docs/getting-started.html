@@ -85,7 +85,7 @@
   <div class="meta">
     面向读者：会用 Python 3.12+、看得懂线程/进程与事件日志的后端或自动化工程师。
     仓库文档与代码注释以中文为主。<br>
-    本文与源码对应版本：<code>jev-loop 0.2.0</code> / <code>pi-jev-loop 0.2.0</code>。
+    本文与源码对应版本：<code>jev-loop 0.2.0</code> / <code>pi-jev-loop 0.2.0</code>（MIT 许可）。
   </div>
 </header>
 
@@ -102,7 +102,7 @@
     <li><a href="#verify">8. 验证与“完成”的口径</a></li>
     <li><a href="#pitfalls">9. 常见坑</a></li>
     <li><a href="#map">10. 目录地图</a></li>
-    <li><a href="#publish">11. 给仓库所有者的推送前清单</a></li>
+    <li><a href="#publish">11. 仓库维护（所有者）</a></li>
   </ol>
 </nav>
 
@@ -177,7 +177,7 @@ bundle（你项目里的代码 + manifest）
     <tr><td>pi（可选）</td><td>只有走“在 pi 里用”这条路才需要</td></tr>
     <tr><td>TypeSafe / Jev API key（可选）</td><td>仓库内所有测试与 demo 都不联网、不需要 key；自己接真实 Jev 时才要</td></tr>
   </table>
-  <pre><code>git clone https://github.com/&lt;owner&gt;/jev-loop.git
+  <pre><code>git clone https://github.com/kevin-zhan/jev-loop.git
 cd jev-loop
 uv sync</code></pre>
   <p>不用 uv 也可以（包没有运行时依赖）：</p>
@@ -223,10 +223,10 @@ print(result.status, result.stop_reason)</code></pre>
   <h2>4. 路径 B：在 pi 里用（pi-jev 扩展）</h2>
   <p>仓库根就是一个 pi package（<code>package.json</code> 声明了 <code>extensions/pi-jev.ts</code> 与 <code>skills/pi-jev</code>）。</p>
   <pre><code># 从 GitHub 直接装（建议钉版本，便于复现）
-pi install git:github.com/&lt;owner&gt;/jev-loop@v0.2.0
+pi install git:github.com/kevin-zhan/jev-loop@v0.2.0
 
 # 或者临时试一把，不写设置
-pi -e https://github.com/&lt;owner&gt;/jev-loop</code></pre>
+pi -e https://github.com/kevin-zhan/jev-loop</code></pre>
   <p>装好后在 pi 里 <code>/reload</code>；它提供：</p>
   <table>
     <tr><th>入口</th><th>用途</th></tr>
@@ -422,17 +422,17 @@ npm test                   # pi RPC 真实加载扩展，不调用模型</code><
 </section>
 
 <section id="publish">
-  <h2>11. 给仓库所有者的推送前清单</h2>
-  <p>这一节不是给使用者的，是这份说明成立的前提：</p>
-  <ul class="check">
-    <li><strong>加 LICENSE</strong>：仓库当前没有许可证文件；没有它，别人在法律上无权复用。</li>
-    <li><strong>决定 <code>spec/</code> 的去留</strong>：它目前<em>未被 Git 跟踪</em>（<code>git status</code> 显示 <code>?? spec/</code>），推送后不会出现在 GitHub。</li>
-    <li><strong>清理绝对路径示例</strong>：<code>docs/pi-integration.md</code> 与 <code>AGENTS.md</code> 里有 <code>/Users/&lt;你&gt;/…</code> 形式的安装示例，建议换成 <code>&lt;pkg&gt;</code> 或相对路径。</li>
-    <li><strong>确认没有密钥与私有数据</strong>：仓库内测试与 demo 都不需要 key；<code>.gitignore</code> 已排除 <code>.venv/ .env .env.* artifacts/</code> 等，推送前仍应 <code>git grep -i</code> 一遍 token、cookie、内网地址。</li>
-    <li><strong>加一条 CI</strong>：<code>uv run pytest &amp;&amp; uv run ruff check . &amp;&amp; npm test</code>，让“克隆下来就能验证”这句话有保障。</li>
-    <li><strong>在 <code>package.json</code> 里补 <code>repository</code> / <code>homepage</code></strong>（可选），便于 <code>pi install</code> 后溯源。</li>
-    <li><strong>告知读者文档语言</strong>：README、注释与本文以中文为主，英文读者需要翻译或自带模型阅读。</li>
-  </ul>
+  <h2>11. 仓库维护（所有者视角）</h2>
+  <p>这一节不是给使用者的，记的是仓库现状与发版约定：</p>
+  <table>
+    <tr><th>项</th><th>现状 / 约定</th></tr>
+    <tr><td>许可证</td><td><code>LICENSE</code> = MIT（Copyright (c) 2026 kevin-zhan）；<code>pyproject.toml</code> 与 <code>package.json</code> 都标了 <code>MIT</code></td></tr>
+    <tr><td>CI</td><td><code>.github/workflows/ci.yml</code>：<code>uv run pytest</code> + <code>uv run ruff check .</code>，另有一个 job 装 pi 后跑 <code>npm test</code></td></tr>
+    <tr><td>设计规范</td><td><code>spec/</code>（questions / state / fixture）已纳入版本控制</td></tr>
+    <tr><td>发版</td><td>版本号在 <code>pyproject.toml</code> 与 <code>package.json</code> 同步；<code>git tag vX.Y.Z &amp;&amp; git push origin vX.Y.Z</code></td></tr>
+    <tr><td>文档语言</td><td>中文为主；README 顶部有一段英文摘要，英文读者从那里进入</td></tr>
+    <tr><td>隐私</td><td>仓库内测试与 demo 都不需要 key；<code>.gitignore</code> 排除 <code>.venv/ .env .env.* artifacts/</code>；提交前用 <code>git grep -i</code> 自查 token、cookie、内网地址</td></tr>
+  </table>
 </section>
 
 </main>
