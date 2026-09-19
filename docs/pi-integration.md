@@ -71,7 +71,8 @@ class ManagedController(Protocol):
     def request_stop(self, reason: str) -> None: ...
 ```
 
-- `run` 在 engine thread 执行行为循环；
+- `run` 在 engine thread 执行行为循环；返回的 `ControllerResult.resources_released` 只有在 controller
+  已确认所有外部输入释放时才能为 `true`；强制杀死子进程等不确定路径必须返回 `false`；
 - 另外三个方法可能由 coordinator thread 调用，必须线程安全；
 - `request_stop` 必须同步释放 held inputs，不得等待模型或网络；
 - 外部设备还应有独立 watchdog，因为 Python 进程被 `SIGKILL` 时任何 cleanup 都不保证执行；

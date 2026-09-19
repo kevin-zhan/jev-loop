@@ -7,7 +7,7 @@ import json
 from jev_loop.host.events import ManagedEvent, ManagedEventKind
 from jev_loop.host.reduce import apply, replay
 from jev_loop.host.store import ManagedRecorder, load_events
-from jev_loop.host.types import CognitionStatus, ManagedStatus
+from jev_loop.host.types import CognitionStatus, ControllerResult, ManagedStatus
 
 
 def events():
@@ -54,6 +54,11 @@ def events():
             {"status": "succeeded", "output": {"ok": True}},
         ),
     ]
+
+
+def test_controller_can_explicitly_refuse_to_confirm_resource_release():
+    result = ControllerResult(ManagedStatus.FAILED, "forced_kill", resources_released=False)
+    assert result.resources_released is False
 
 
 def test_managed_reducer_is_pure_and_replayable():

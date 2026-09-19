@@ -236,6 +236,39 @@ def test_stop_acknowledgement_is_distinct_from_confirmed_stop_and_releases_input
         )
 
 
+def test_controller_result_can_quarantine_resource_without_a_worker_crash(host_home, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "bundle.json").write_text(
+        '{"schema_version":1,"entrypoint":"controller:build","python_path":"."}'
+    )
+    (project / "controller.py").write_text(
+        "from jev_loop.host import ControllerResult, ManagedStatus\n"
+        "class Controller:\n"
+        "  def run(self, stop_event): return ControllerResult(ManagedStatus.SUCCEEDED, resources_released=False)\n"
+        "  def snapshot(self): return {'release_confirmed': False}\n"
+        "  def update(self, task, patch): pass\n"
+        "  def request_stop(self, reason): pass\n"
+        "def build(spec, services, config): return Controller()\n"
+    )
+    request = {
+        "action": "start",
+        "owner_id": "session-test",
+        "idempotency_key": "unconfirmed-result",
+        "project_root": str(project),
+        "bundle": str(project / "bundle.json"),
+        "task": {"goal": "return without release confirmation"},
+        "resource_keys": ["device:unconfirmed"],
+        "lease_seconds": 20,
+        "max_runtime_seconds": 10,
+    }
+    first = dispatch(request, home=host_home)["run"]
+    final = wait_for(host_home, first["run_id"], lambda item: item["status"] == "succeeded")
+    assert final["resources_released"] is False
+    with pytest.raises(ValueError, match="quarantined"):
+        dispatch({**request, "idempotency_key": "unconfirmed-result-2"}, home=host_home)
+
+
 def test_worker_crash_quarantines_resources_until_operator_verifies_release(host_home):
     first = start(host_home, key="orphan-a", resource_keys=["device:unsafe"])["run"]
     os.kill(first["pid"], signal.SIGKILL)

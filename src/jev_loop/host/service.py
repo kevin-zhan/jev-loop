@@ -395,6 +395,7 @@ def run_worker(run_dir: Path) -> int:
                 ManagedStatus.FAILED,
                 "stop_release_failed",
                 {"requested_reason": result.reason, "error": repr(error)},
+                resources_released=False,
             )
             recorder.emit(
                 ManagedEventKind.ERROR,
@@ -427,7 +428,8 @@ def run_worker(run_dir: Path) -> int:
             result = controller.run(stop_event)
             if not isinstance(result, ControllerResult):
                 raise TypeError(f"controller.run returned {type(result).__name__}, expected ControllerResult")
-            release_confirmed.set()  # returning from run promises that the controller released its resources
+            if result.resources_released:
+                release_confirmed.set()
             result_queue.put(result)
         except BaseException as error:  # keep the coordinator alive long enough to record and release
             try:
@@ -438,7 +440,13 @@ def run_worker(run_dir: Path) -> int:
                     ManagedEventKind.ERROR,
                     {"error": repr(error), "traceback": traceback.format_exc()},
                 )
-                result_queue.put(ControllerResult(ManagedStatus.FAILED, "controller_error"))
+                result_queue.put(
+                    ControllerResult(
+                        ManagedStatus.FAILED,
+                        "controller_error",
+                        resources_released=release_confirmed.is_set(),
+                    )
+                )
 
     thread = threading.Thread(target=engine, name=f"jev-loop-{spec.run_id}", daemon=True)
     thread.start()
@@ -564,8 +572,8 @@ def _process_commands(run_dir, spec, recorder, cognition, controller, ask_to_sto
                 patch = dict(command.get("task_patch") or {})
                 _validate_task_patch(patch)
                 next_task = {**recorder.state.task, **patch}
+                controller.update(next_task, patch)  # validate/accept before committing the event
                 recorder.emit(ManagedEventKind.TASK_UPDATED, {"task": patch})
-                controller.update(next_task, patch)
                 data["config_version"] = recorder.state.config_version
             elif action == "respond":
                 completed = cognition.complete(

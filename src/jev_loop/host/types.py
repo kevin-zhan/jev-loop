@@ -211,6 +211,7 @@ class ControllerResult:
     status: ManagedStatus
     reason: str | None = None
     output: Json = None
+    resources_released: bool = True
 
     def __post_init__(self) -> None:
         if not self.status.terminal:
