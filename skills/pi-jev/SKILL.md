@@ -23,9 +23,10 @@ The separate `united-pz-jev` project already contains a developed and verified b
 business-class upgrade queries (nonstop SFO to HKG / PVG / PEK). That project is independent of this
 repository — this repository does not ship the bundle.
 
-Replace the `<absolute-path-to-united-pz-jev>` placeholder used below with the real, existing absolute
-manifest path inside the trusted project/workspace root before doing anything else; never call
-`jev_loop start` while the placeholder is still unreplaced. You can then ask for it like this:
+Replace `<absolute-path-to-united-pz-jev>` with the real absolute path to the `united-pz-jev` project
+directory. Before calling `jev_loop start`, verify that the resulting
+`.jev/bundles/united-pz/bundle.json` file exists and lies inside the trusted project/workspace root.
+Never start with an unresolved placeholder.
 
 ```text
 Run one United MUA query with pi-jev.
