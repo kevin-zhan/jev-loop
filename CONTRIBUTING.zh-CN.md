@@ -1,0 +1,52 @@
+# 贡献指南
+
+[English](CONTRIBUTING.md) | **简体中文**
+
+欢迎贡献。Issue 与 PR 都在 GitHub 上处理；本文件是一份改动必须满足什么的简版说明。
+
+## 开发环境
+
+```sh
+git clone https://github.com/kevin-zhan/jev-loop.git
+cd jev-loop
+uv sync
+```
+
+需要 Python 3.12+，运行时零第三方依赖。`npm test`（用 RPC 真实加载 pi package）额外需要 Node 与
+pi CLI。
+
+## 提交前必须通过
+
+```sh
+uv run pytest          # 全部离线；不调用付费 API
+uv run ruff check .
+npm test               # 只在改到 extensions/ 或 package.json 时需要
+```
+
+- 测试不得调用付费模型。需要验证真实线上形状时，写显式脚本，并在 PR 里说明成本。
+- 新增行为要有对应测试。预期覆盖范围包括：frame 绑定被拒、四态回执、未决操作不重发、无效果动作在
+  候选集收窄后仍能推进、可逆循环默认挂起（`awaiting_evidence`）且只在升级到上限后才以
+  `cycle_detected` 失败、verification `unknown` 不算成功、reducer 纯性。
+
+## 设计约束（先读 `AGENTS.md` 与 `docs/design.zh-CN.md`）
+
+- 内核（`src/jev_loop/core/`）不得依赖 Jev、HTTP、浏览器或时钟之外的外部状态。模型相关代码在
+  `src/jev_loop/policies/`；环境行为放适配器。
+- 状态的唯一真相是事件：任何状态变化都必须经由 `core/events.py` 与 `core/reduce.py` 的纯 reducer。
+  禁止直接改 `RuntimeState`，禁止在 reducer 里做 I/O 或调用模型。
+- 不要为了"让循环更顺畅"移除守卫（`NO_PROGRESS` / `REPEAT` / `CYCLE`）。改动守卫语义必须同时更新
+  测试与 `docs/design.zh-CN.md` 的守卫表。
+- `pending` / `unknown` 的操作只许查询不许重发；`idempotency=NONE` 永不盲目重试。
+- 不把真实 API key、cookie 或页面登录态写进代码、测试、事件或 snapshot。
+- 改到 pi package 或 bundle 契约时，同步更新 `docs/pi-integration.zh-CN.md`。
+- 文档以英文为 canonical：先改英文文件，再保持对应的 `*.zh-CN.*` 副本信息对等（反过来做改变含义的
+  措辞修订时同样如此）。
+
+## 提交信息
+
+`type(scope): summary`，例如 `fix(host): preserve unconfirmed resource claims`。一次提交只做一件事；
+不要把无关格式化混进功能改动。
+
+## 许可证
+
+提交即表示你的贡献以本仓的 [MIT 许可证](LICENSE) 授权。

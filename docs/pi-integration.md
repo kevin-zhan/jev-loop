@@ -1,7 +1,10 @@
-# pi-jev：受管理的 Jev Loop 宿主
+# pi-jev: a managed host for Jev Loop
 
-`pi-jev` 是本仓随附的 pi package，不是 pi fork。它把项目内行为 bundle 作为独立进程运行，让 pi 管理
-生命周期并处理运行时认知请求；控制循环不等待主 agent 的一次回复。
+**English** | [简体中文](pi-integration.zh-CN.md)
+
+`pi-jev` is the pi package shipped with this repository; it is not a pi fork. It runs project-local
+behavior bundles as separate processes, lets pi manage their lifecycle, and handles runtime cognition
+requests — the control loop does not wait for a single reply from the main agent.
 
 ```text
 pi session
@@ -16,34 +19,44 @@ managed host (one worker process per run)
   └─ trusted project bundle → controller → Loop/environment/driver
 ```
 
-## 安装与试用
+## Install and try it
 
-要求 Python 3.12+ 和 pi。扩展默认调用 `python3`，可用 `JEV_LOOP_PYTHON` 指向另一个解释器。
-Python 源码通过受控的 `PYTHONPATH` 传给子进程，不需要把本包安装到全局环境。
+Python 3.12+ and pi are required (pi is not installed by this repository; install it using its official
+installation instructions — see the [pi repository](https://github.com/earendil-works/pi)). The
+extension calls `python3` by default; `JEV_LOOP_PYTHON` points it
+at another interpreter. The Python source is passed to the child process through a controlled
+`PYTHONPATH`, so the package does not have to be installed into a global environment.
+
+```sh
+git clone https://github.com/kevin-zhan/jev-loop.git   # private repository: access required
+cd jev-loop
+pi install .            # register this local package with pi (references the clone in place)
+# already-open pi sessions: run /reload, or restart pi
+```
+
+Optional, unpinned remote install (the repository is private, so GitHub access is still required):
 
 ```sh
 pi install git:github.com/kevin-zhan/jev-loop
-# 已打开的 pi 会话执行 /reload；或重启 pi
+pi -e https://github.com/kevin-zhan/jev-loop   # temporary try, without writing settings
 ```
 
-不写设置的临时试用：
+Once installed, the package provides:
 
-```sh
-pi -e https://github.com/kevin-zhan/jev-loop
-```
-
-安装后提供：
-
-- `jev_loop` 工具：`start / list / inspect / events / update / respond / stop / release_resources`；`events` 每页最多 500 条并返回 `next_seq`；
-- `/jev-runs`：显示当前 session 拥有的 run；
-- `/jev-self-test`：离线跑一遍“认知等待时继续推进、结束后释放输入”的真实进程验收；
-- `/jev-stop-all`：交互确认后停止当前 session 的所有活动 run；
-- `pi-jev` skill：教 agent 何时使用、怎样处理 cognition 和怎样验收。
+- the `jev_loop` tool: `start / list / inspect / events / update / respond / stop / release_resources`;
+  `events` returns at most 500 entries per page and includes `next_seq`;
+- `/jev-runs`: the runs owned by the current session;
+- `/jev-self-test`: an offline acceptance run of the real process (keeps progressing while a cognition
+  job is pending, releases inputs when stopped);
+- `/jev-stop-all`: stops all active runs of the current session after interactive confirmation;
+- the `pi-jev` skill: teaches the agent when to use the extension, how to handle cognition and how to
+  verify a run.
 
 ## Bundle manifest
 
-扩展只接受内建 `diagnostic` 或当前可信项目目录内的 manifest。manifest 会执行 Python 代码，因此它是明确的
-项目代码信任边界，不是远端提示词。
+The extension accepts only the built-in `diagnostic` bundle or a manifest inside the current trusted
+project directory. A manifest executes Python code, so it is an explicit project-code trust boundary,
+not a remote prompt.
 
 ```json
 {
@@ -54,14 +67,14 @@ pi -e https://github.com/kevin-zhan/jev-loop
 }
 ```
 
-`entrypoint` 的 factory 签名是：
+The `entrypoint` factory signature is:
 
 ```python
 def build(spec: RunSpec, services: RuntimeServices, config: dict) -> ManagedController:
     ...
 ```
 
-controller 的四个方法：
+The four controller methods:
 
 ```python
 class ManagedController(Protocol):
@@ -71,24 +84,28 @@ class ManagedController(Protocol):
     def request_stop(self, reason: str) -> None: ...
 ```
 
-- `run` 在 engine thread 执行行为循环；返回的 `ControllerResult.resources_released` 只有在 controller
-  已确认所有外部输入释放时才能为 `true`；强制杀死子进程等不确定路径必须返回 `false`；
-- 另外三个方法可能由 coordinator thread 调用，必须线程安全；
-- `request_stop` 必须同步释放 held inputs，不得等待模型或网络；
-- 外部设备还应有独立 watchdog，因为 Python 进程被 `SIGKILL` 时任何 cleanup 都不保证执行；
-- `snapshot` 只放有界、可 JSON 序列化的状态摘要，完整证据写入 run 的 `artifacts/`。
+- `run` executes the behavior loop on the engine thread; the returned `ControllerResult.resources_released`
+  may be `true` only when the controller has confirmed that all external inputs are released. Uncertain
+  paths such as force-killing a child process must return `false`.
+- The other three methods may be called from the coordinator thread and must be thread-safe.
+- `request_stop` must release held inputs synchronously and must not wait for a model or the network.
+- External devices also need an independent watchdog, because no cleanup is guaranteed when the Python
+  process is `SIGKILL`ed.
+- `snapshot` carries only a bounded, JSON-serializable state summary; full evidence belongs in the run's
+  `artifacts/`.
 
-已有 `Loop` 可直接用 `LoopController` 托管，参考
-[`examples/bundles/switchboard`](../examples/bundles/switchboard)。同步 `Loop.step()` 仍然是一次一个动作；如果环境
-需要在慢模型调用期间持续推进，设备 driver/watchdog 必须在独立线程或进程运行，controller 只协调它。
+An existing `Loop` can be hosted directly with `LoopController`; see
+[`examples/bundles/switchboard`](../examples/bundles/switchboard). The synchronous `Loop.step()` still
+executes one action at a time: if the environment must keep moving during a slow model call, the device
+driver/watchdog has to run on its own thread or process and the controller only coordinates it.
 
-## 运行中认知
+## Runtime cognition
 
-bundle 通过 broker 建立 job，调用立即返回：
+A bundle opens a job through the broker; the call returns immediately:
 
 ```python
 job_id = services.cognition.request(
-    "已有候选偏向吃喝，下一轮应补哪些搜索方向？",
+    "Existing candidates lean toward food and drink; which search directions should the next round add?",
     context={"candidate_summary": summary},
     output_schema={"type": "object", "required": ["search_terms"]},
     resource_keys=("research-plan",),
@@ -97,42 +114,62 @@ job_id = services.cognition.request(
 )
 ```
 
-controller 可继续运行，并通过 `services.cognition.get(job_id)` 检查状态。pi 扩展把 pending job 作为明确标注的
-custom message 交给 owner session；主 agent 用 `jev_loop respond` 提交匹配 run/job/version 的结果。迟到、重复、
-版本不匹配、结构不符或 run 已停止的结果会被拒绝。当前 dependency-free validator 只实现下列关键字的**有限语义**，
-bundle 不应假设其他关键字已执行，也不应把这些当作完整的 Draft 2020-12：
+The controller can keep running and check the state through `services.cognition.get(job_id)`. The pi
+extension delivers pending jobs to the owner session as clearly marked custom messages; the main agent
+submits a matching run/job/version result with `jev_loop respond`. Late, duplicate, version-mismatched,
+schema-violating results, or results for an already stopped run are rejected.
 
-| 关键字 | 实际行为与限制 |
+The current dependency-free validator implements **limited semantics** for the following keywords only.
+Bundles must not assume any other keyword is enforced, and must not treat this as full Draft 2020-12:
+
+| Keyword | Actual behavior and limits |
 |---|---|
-| `type` | `null / boolean / integer / number / string / array / object`；`integer`、`number` 都不接受 `bool` |
-| `enum` / `const` | 用 Python 相等比较，因此 `1` 与 `true` 不区分；`const` 缺省时不检查 |
-| `required` / `properties` | 只在值是对象时生效；`properties` 里的子 schema 递归校验 |
-| `additionalProperties` | **只识别字面 `false`**（多余字段即拒绝）；写成子 schema 对象形式**不会被执行** |
-| `items` / `minItems` / `maxItems` | 只在值是数组时生效 |
-| `minLength` / `maxLength` | 只在值是字符串时生效 |
-| `minimum` / `maximum` | 只对非 `bool` 数字生效；空 schema `{}` 直接放行 |
+| `type` | `null / boolean / integer / number / string / array / object`; neither `integer` nor `number` accepts `bool` |
+| `enum` / `const` | compared with Python equality, so `1` and `true` are not distinguished; `const` is not checked when absent |
+| `required` / `properties` | only applied when the value is an object; sub-schemas inside `properties` are validated recursively |
+| `additionalProperties` | **only the literal `false` is recognized** (extra fields are rejected); the sub-schema object form is **not executed** |
+| `items` / `minItems` / `maxItems` | only applied when the value is an array |
+| `minLength` / `maxLength` | only applied when the value is a string |
+| `minimum` / `maximum` | only applied to non-`bool` numbers; an empty schema `{}` passes everything |
 
-每个 run 最多同时有 8 个 pending job，
-question/context/schema/result/evidence 也分别有硬大小上限。结果只进入 broker；bundle 仍需校验其世界前提与
-资源版本后才能采用。
+Each run may have at most 8 pending jobs at a time, and question/context/schema/result/evidence each
+have a hard size limit. Results only enter the broker; a bundle still has to validate its world
+preconditions and resource versions before adopting them.
 
-内建 `diagnostic` 是对此语义的真实探针：它在 cognition pending 时维护 `forward` 输入，同时独立增加 world tick
-和 decision 计数；收到结果或任何停止信号后释放输入。它不访问网页，也不能作为用户任务完成证据。
+The built-in `diagnostic` bundle is a real probe of these semantics: while a cognition job is pending it
+maintains a `forward` input while independently incrementing world ticks and decision counts, and
+releases the input when a result arrives or any stop signal appears. It does not access web pages and
+cannot serve as evidence that a user task was completed.
 
-## 生命周期与安全语义
+## Lifecycle and safety semantics
 
-- **Start 幂等**：`owner session + project root + idempotency key` 唯一映射到一个 run；重复调用不会再启动控制器。
-- **独占资源**：`resourceKeys` 在 host 内原子声明，例如 `browser:research-profile`；活动 run 间不能重复占有。
-- **Session owner**：管理命令和 cognition reply 必须匹配创建 run 的 pi session ID。切换到另一 session 不会继承控制权。
-- **租约**：非 detached run 默认 30 秒；扩展约每 3 秒 heartbeat。pi 消失或切换 session 后，worker 请求停止并释放输入。
-- **Detached**：只有 TUI 中直接确认才能创建，且仍受 `maxRuntimeSeconds` 约束。
-- **Stop 两阶段**：`accepted` 仅表示 worker 收到停止意图；terminal status 加 `resources_released=true` 才能证明 host 收到了 controller 的同步释放确认。`confirmed` 只表示已等到 terminal。
-- **超时**：run 有硬最大运行时间，cognition job 有各自 deadline；二者都不会无限等待。
-- **单写所有权**：agent 不应在 run 活动时直接操作同一个 `resourceKeys`。pi-jev 只能约束经 host 注册的 run，不能阻止外部程序绕过它。
-- **崩溃隔离**：worker 消失且无法确认 release 时，资源 claim 保持 quarantined，不会被下一个 run 自动抢走。只有用户在 TUI 中独立核实设备输入已释放后，才能用 `release_resources` 清除 claim；进程外 watchdog 仍是第一道保护。
-- **会话历史不是运行真相**：事件日志是 host 状态的来源，pi session 只保存 delivery cursor。压缩、reload 不重放动作。
+- **Idempotent start**: `owner session + project root + idempotency key` maps to exactly one run; a
+  repeated call does not start another controller.
+- **Exclusive resources**: `resourceKeys` (for example `browser:research-profile`) are declared
+  atomically inside the host and cannot be held twice by active runs.
+- **Session owner**: management commands and cognition replies must match the pi session ID that created
+  the run. Switching sessions does not inherit control.
+- **Lease**: non-detached runs default to 30 seconds; the extension heartbeats roughly every 3 seconds.
+  If pi disappears or the session switches, the worker requests a stop and releases its inputs.
+- **Detached**: can only be created with direct confirmation in the TUI, and is still bounded by
+  `maxRuntimeSeconds`.
+- **Two-phase stop**: `accepted` only means the worker received the stop intent; terminal status plus
+  `resources_released=true` is what proves the host received the controller's synchronous release
+  confirmation. `confirmed` only means it waited for terminal.
+- **Timeouts**: a run has a hard maximum runtime and cognition jobs have their own deadlines; neither
+  waits forever.
+- **Single-writer ownership**: the agent must not operate the same `resourceKeys` directly while a run is
+  active. pi-jev can only constrain runs registered through the host; it cannot stop an external program
+  from bypassing it.
+- **Crash isolation**: when a worker disappears without a confirmable release, the resource claim stays
+  quarantined and is not taken over automatically by the next run. Only after the user has independently
+  verified in the TUI that the device inputs are released may `release_resources` clear the claim; an
+  out-of-process watchdog remains the first line of protection.
+- **Session history is not the run's truth**: the event log is the source of host state, and the pi
+  session only stores a delivery cursor. Compaction and reloads do not replay actions.
 
-默认数据目录为 `~/.local/state/jev-loop/`，可通过 `JEV_LOOP_HOME` 改写。每个 run 包含：
+The default data directory is `~/.local/state/jev-loop/`, overridable with `JEV_LOOP_HOME`. Each run
+contains:
 
 ```text
 runs/<run-id>/
@@ -144,18 +181,22 @@ runs/<run-id>/
   artifacts/         # bundle-owned evidence
 ```
 
-任务内容通过 management process 的 stdin 发送，不放进 shell 参数。目录和状态文件按用户私有权限创建；bundle 自己
-仍须避免把 cookie、token 或原始隐私资料写入事件和 snapshot。
+Task content travels through the management process's stdin, not through shell arguments. Directories
+and state files are created with user-private permissions; a bundle must still avoid writing cookies,
+tokens or raw private data into events and snapshots.
 
-## 当前明确不包含
+## Explicitly not included
 
-- 没有小红书、浏览器、手机或游戏站点适配器；它们必须是单独审查和验收的 project bundle。
-- 没有把主 agent 变成按钮决策者；按钮候选仍由 bundle 的 Jev policy 决定。
-- 没有 MCP server；需要跨宿主时可在相同 host API 外包一层适配器。
-- 没有保证任意第三方 driver 能安全停车；bundle 必须实现同步 release 和设备侧 watchdog。
-- 没有在离线测试中调用 TypeSafe 或其他付费模型。
+- No Xiaohongshu, browser, phone or game-site adapters; those have to be separately reviewed and
+  accepted project bundles.
+- The main agent is not turned into a button-press decision maker; button candidates are still chosen by
+  the bundle's Jev policy.
+- No MCP server; crossing hosts requires an adapter layered over the same host API.
+- No guarantee that an arbitrary third-party driver can park safely; bundles must implement synchronous
+  release and a device-side watchdog.
+- No paid TypeSafe or other model calls in the offline tests.
 
-## 验证
+## Verification
 
 ```sh
 uv sync
@@ -165,6 +206,7 @@ npm test
 node --experimental-strip-types --check extensions/pi-jev.ts
 ```
 
-测试覆盖：认知等待期间继续推进、回复后完成、停止释放输入、owner lease 到期、start 幂等、版本化更新、迟到回复
-拒绝、资源独占与崩溃 quarantine、项目 bundle 加载，以及用 pi RPC 实际加载 package 并执行 `/jev-runs` 和
-`/jev-self-test`（不调用模型）。
+Test coverage includes: progressing while a cognition job is pending, completing after a reply, releasing
+inputs on stop, owner lease expiry, idempotent start, versioned updates, rejecting late replies, resource
+exclusivity and crash quarantine, loading a project bundle, and loading the package with real pi RPC to
+run `/jev-runs` and `/jev-self-test` (without calling a model).

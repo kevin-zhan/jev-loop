@@ -1,43 +1,63 @@
 # Jev Loop
 
-本仓是独立项目，自带 Git 与依赖；工作前先读本文件与 `README.md`。
+This is an independent project with its own Git history and dependencies; read this file and `README.md`
+before working in it.
 
-## 这个项目是什么
+## What this project is
 
-显式状态驱动的决策运行时：**代码拥有循环、状态与终止；策略（Jev 或任何实现）只在一帧内做选择。**
-它回答的是 `state + questions → 答案` 之外的那部分职责。设计依据见 `README.md`；第一版内核只做
-单环境、单写执行，不做多环境、自动规划和子 loop。
+An explicit-state decision runtime: **code owns the loop, the state and the termination; a policy
+(Jev or any implementation) only chooses inside one frame.** It covers the responsibilities that fall
+outside `state + questions → answer`. The design rationale is in `README.md`; the first kernel version
+does single-environment, single-writer execution only — no multi-environment work, automatic planning
+or sub-loops.
 
-## 边界
+## Boundaries
 
-- 内核（`src/jev_loop/core/`）不得依赖 Jev、HTTP、浏览器或时钟之外的外部状态；所有模型相关代码在
-  `src/jev_loop/policies/`。新增环境行为放适配器，不放核心。pi 生命周期和 cognition bridge 只放
-  `src/jev_loop/host/`、`extensions/` 与 bundle，不反向污染内核。
-- 状态的唯一真相是**事件**：任何状态变化都必须经由 `core/events.py` 的事件与 `core/reduce.py` 的
-  纯 reducer。禁止直接改 `RuntimeState`，禁止在 reducer 里做 I/O 或调用模型。
-- 策略返回的候选 id 只在本帧内有效；执行前必须重新校验观测与前置条件。`request_finish` 只是请求验证，
-  只有 verifier 的 `satisfied` 才算成功；`unknown` 不得四舍五入成成功或失败。
-- 不要移除守卫（无效果 / 重复 / 循环）来"让循环更顺畅"：它们是确定性策略下唯一的逃生阀。
-  改动守卫语义必须同时改测试与 `README.md` 的守卫表。
-- `pending` / `unknown` 的操作只许查询不许重发；`idempotency=NONE` 的动作永远不能盲目重试。
-- 不把真实 API key、cookie、页面登录态写进代码或测试；内核的联网代码只允许出现在
-  `policies/jev.py` 的 `http_request_fn`。bundle 自己的联网适配必须留在 bundle，并避免把秘密写进 host event/snapshot。
-- Managed controller 的 `request_stop` 必须线程安全并同步释放 held inputs；真实设备还必须有进程外 watchdog。
-  `accepted` 不是停止确认，只有 terminal status、`resources_released=true` 加执行器确认才算停下；worker
-  异常消失时 resource claim 保持 quarantine，不能自动让新 run 接管。
+- The kernel (`src/jev_loop/core/`) must not depend on Jev, HTTP, a browser or any external state beyond
+  the clock; all model-facing code lives in `src/jev_loop/policies/`. New environment behavior goes into
+  adapters, not the core. pi lifecycle and the cognition bridge stay in `src/jev_loop/host/`,
+  `extensions/` and bundles, and must not leak back into the kernel.
+- Events are the single source of truth: every state change must go through the events in
+  `core/events.py` and the pure reducer in `core/reduce.py`. Never mutate `RuntimeState` directly, and
+  never do I/O or call a model inside the reducer.
+- A candidate id returned by a policy is valid only inside its frame; the observation and preconditions
+  must be re-checked before execution. `request_finish` only requests verification, and only a verifier
+  returning `satisfied` counts as success; `unknown` must not be rounded to success or failure.
+- Do not remove the guards (no-effect / repeat / cycle) to "make the loop smoother": for a deterministic
+  policy they are the only escape valves. Changing guard semantics requires updating the tests and the
+  guard table in `docs/design.md`.
+- Operations in `pending` / `unknown` may only be queried, never resent; `idempotency=NONE` actions are
+  never retried blindly.
+- Never write real API keys, cookies or page login sessions into code or tests. The only networking code
+  in the kernel is `http_request_fn` in `policies/jev.py`. A bundle's own network adapter must stay in
+  the bundle, and secrets must never reach host events or snapshots.
+- A managed controller's `request_stop` must be thread-safe and release held inputs synchronously; real
+  devices also need an out-of-process watchdog. `accepted` is not a stop confirmation: only terminal
+  status, `resources_released=true` and the executor's confirmation mean stopped. When a worker dies
+  unexpectedly, its resource claims stay quarantined and must not be taken over automatically by a new
+  run.
 
-## 验证
+## Documentation language
+
+Documentation in this repository is English-canonical, with information-equal Chinese copies named
+`*.zh-CN.md` / `*.zh-CN.html` next to the English file. `AGENTS.md` and `skills/pi-jev/SKILL.md` are
+English only. Code comments, runtime messages and commit messages are English.
+
+## Verification
 
 ```sh
 uv sync
-uv run pytest          # 全部离线：mock 环境 + 确定性策略 + 假 requester
+uv run pytest          # everything is offline: mock environment, deterministic policy, fake requester
 uv run ruff check .
-npm test                                # pi RPC 真实加载，不调用模型
+npm test                                # real pi RPC load, no model calls
 node --experimental-strip-types --check extensions/pi-jev.ts
-uv run jev-loop-demo --scenario clean   # noop / cycle 三个场景
+uv run jev-loop-demo --scenario clean   # all three scenarios: clean / noop / cycle
 ```
 
-- 测试不得调用付费 API；需要真实形状验证时用显式脚本并说明成本，不放进 pytest。
-- 覆盖重点：frame 绑定被拒、四态回执、未决操作不重发、无效果动作收窄候选后仍能推进、
-  可逆循环默认挂起（`awaiting_evidence`）而非烧满步数、升级到上限才以 `cycle_detected` 失败、
-  验证 unknown 不等于成功、reducer 纯性。
+- Tests must not call paid APIs; when a real wire shape needs verification, write an explicit script and
+  state its cost — such scripts do not belong in pytest.
+- Expected coverage: a rejected frame binding, the four receipt states, unresolved operations never
+  being resent, an action with no effect still allowing progress after the candidate set narrows, a
+  reversible cycle suspending by default (`awaiting_evidence`) instead of burning the step budget,
+  failing with `cycle_detected` only after escalations hit the limit, verification `unknown` not
+  counting as success, and reducer purity.

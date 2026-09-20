@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>把 jev-loop 拿去用 · 外部工程师上手说明</title>
+<title>Using jev-loop · walkthrough for external engineers</title>
 <style>
   :root {
     --bg: #fbfbfa; --fg: #1d1f21; --muted: #666b70; --line: #e3e2df;
@@ -80,226 +80,271 @@
 <div class="shell">
 
 <header>
-  <h1>把 jev-loop 拿去用</h1>
-  <p>从 GitHub 克隆之后，外部工程师如何跑起来、接进自己的项目、并写一个自己的 bundle。</p>
+  <h1>Using jev-loop</h1>
+  <p>How an external engineer runs it after cloning, connects it to their own project, and writes a bundle.</p>
   <div class="meta">
-    面向读者：会用 Python 3.12+、看得懂线程/进程与事件日志的后端或自动化工程师。
-    仓库文档与代码注释以中文为主。<br>
-    本文与源码对应版本：<code>jev-loop 0.2.0</code> / <code>pi-jev-loop 0.2.0</code>（MIT 许可）。
+    <strong>English</strong> | <a href="getting-started.zh-CN.html">简体中文</a><br>
+    Intended reader: a backend or automation engineer who knows Python 3.12+ and is comfortable with
+    threads/processes and event logs. The English documents are canonical and each has an
+    information-equal Chinese copy; code comments and runtime messages are English.<br>
+    This document matches: <code>jev-loop 0.2.0</code> / <code>pi-jev-loop 0.2.0</code> (MIT license).
   </div>
 </header>
 
 <nav class="toc">
   <ol>
-    <li><a href="#what">0. 先判断要不要用</a></li>
-    <li><a href="#concepts">1. 它由哪几层组成</a></li>
-    <li><a href="#setup">2. 准备环境</a></li>
-    <li><a href="#path-a">3. 路径 A：当 Python 库用</a></li>
-    <li><a href="#path-b">4. 路径 B：在 pi 里用</a></li>
-    <li><a href="#path-c">5. 路径 C：接自己的宿主</a></li>
-    <li><a href="#bundle">6. 写自己的 bundle</a></li>
-    <li><a href="#safety">7. 生命周期与安全语义</a></li>
-    <li><a href="#verify">8. 验证与“完成”的口径</a></li>
-    <li><a href="#pitfalls">9. 常见坑</a></li>
-    <li><a href="#map">10. 目录地图</a></li>
-    <li><a href="#publish">11. 仓库维护（所有者）</a></li>
+    <li><a href="#what">0. Decide whether you need it</a></li>
+    <li><a href="#concepts">1. What the layers are</a></li>
+    <li><a href="#setup">2. Prepare the environment</a></li>
+    <li><a href="#path-a">3. Path A: as a Python library</a></li>
+    <li><a href="#path-b">4. Path B: inside pi</a></li>
+    <li><a href="#path-c">5. Path C: your own host</a></li>
+    <li><a href="#bundle">6. Write your own bundle</a></li>
+    <li><a href="#safety">7. Lifecycle and safety semantics</a></li>
+    <li><a href="#verify">8. Verification and what "done" means</a></li>
+    <li><a href="#pitfalls">9. Common pitfalls</a></li>
+    <li><a href="#map">10. Directory map</a></li>
+    <li><a href="#publish">11. Repository maintenance (owner)</a></li>
   </ol>
 </nav>
 
 <main>
 
 <section id="what">
-  <h2>0. 先判断要不要用</h2>
-  <p class="lede">一句话：<strong>把“决策”交给模型，“循环、状态、终止、验收”留给代码。</strong>
-  内核假设模型（Jev 或任何策略）对同一帧是确定性的——同样的观测与候选集，答案必然相同。所以只要出现
-  “同一帧又选同一个动作”，模型永远不会自己发现自己在打转，推进力必须由代码提供。</p>
+  <h2>0. Decide whether you need it</h2>
+  <p class="lede">In one sentence: <strong>hand the decision to the model and keep the loop, the state,
+  the termination and the acceptance in code.</strong> The kernel is built for policies that answer
+  deterministically for a given frame: the same observation and candidate set produce the same answer.
+  Under that assumption a model will never notice on its own that it is repeating itself, so the force
+  that moves the loop forward has to come from code.</p>
   <div class="grid2">
     <div class="card">
-      <h4>适合</h4>
+      <h4>A good fit</h4>
       <ul>
-        <li>需要持续操作某个环境（浏览器、设备、工位、长流程），中间还要模型判断；</li>
-        <li>你担心“跑着跑着卡住 / 重复点同一个按钮 / 把模型的 DONE 当成功”；</li>
-        <li>需要可回放的事件日志、明确的资源独占、进程外的崩溃隔离；</li>
-        <li>主 agent 思考慢，而环境驱动必须继续跑（cognition job 异步问、不等）。</li>
+        <li>An environment has to keep being operated (browser, device, workstation, long process) while the model still makes judgments;</li>
+        <li>You worry about "it gets stuck, clicks the same button again, or treats the model's DONE as success";</li>
+        <li>You need a replayable event log, explicit resource exclusivity and crash isolation outside the process;</li>
+        <li>The main agent thinks slowly while the environment driver must keep running (cognition jobs are asked asynchronously and are not waited on).</li>
       </ul>
     </div>
     <div class="card">
-      <h4>不适合</h4>
+      <h4>Not a good fit</h4>
       <ul>
-        <li>一次性工具调用或纯问答；</li>
-        <li>需要多环境并行写、自动规划、子 loop——第一版内核明确不做；</li>
-        <li>想让模型自己规划整条流程：这里代码拥有循环，模型只在一帧里选动作。</li>
+        <li>One-off tool calls or plain questions and answers;</li>
+        <li>Multi-environment parallel writes, automatic planning or sub-loops — the first kernel version explicitly does not do them;</li>
+        <li>Letting the model plan the whole flow: here code owns the loop and the model chooses an action inside one frame.</li>
       </ul>
     </div>
   </div>
 </section>
 
 <section id="concepts">
-  <h2>1. 它由哪几层组成</h2>
-  <pre><code>你的宿主（pi / 自己的服务 / 调度器）
-  │  管理请求：start · inspect · events · heartbeat · update · stop · respond
+  <h2>1. What the layers are</h2>
+  <pre><code>your host (pi / your own service / a scheduler)
+  │  management requests: start · inspect · events · heartbeat · update · stop · respond
   ▼
-host（src/jev_loop/host/，每 run 一个 worker 进程）
-  │  events.jsonl 唯一真相 · 租约 · resourceKeys 独占 · cognition broker · bundle 契约
+host (src/jev_loop/host/, one worker process per run)
+  │  events.jsonl is the source of truth · lease · exclusive resourceKeys · cognition broker · bundle contract
   ▼
-bundle（你项目里的代码 + manifest）
-  └─ ManagedController：run / snapshot / update / request_stop
-       └─ 内核 Loop（可选）+ 你的环境 adapter
+bundle (code in your project + a manifest)
+  └─ ManagedController: run / snapshot / update / request_stop
+       └─ kernel Loop (optional) + your environment adapter
             observe → offer → decide → validate → execute → reduce → guard</code></pre>
   <table>
-    <tr><th>层</th><th>它负责</th><th>它不负责</th></tr>
-    <tr><td>内核 <code>core/</code></td>
-        <td>帧绑定（候选重编号 <code>a1..an</code>）、执行前重新校验、四态回执、三条空转守卫、纯 reducer、verifier 独立验收、各类硬预算</td>
-        <td>模型、网络、浏览器、pi；内核只依赖策略协议</td></tr>
-    <tr><td>宿主 <code>host/</code></td>
-        <td>幂等 start、独占资源声明、租约与超时、append-only 事件、停止两阶段、崩溃 quarantine、cognition broker</td>
-        <td>不知道你操作的是什么环境</td></tr>
-    <tr><td>适配层 <code>extensions/pi-jev.ts</code></td>
-        <td>把宿主接到 pi：<code>jev_loop</code> 工具、斜杠命令、cognition 投递、session heartbeat、TUI 独占确认</td>
-        <td>不含任何站点/设备适配器</td></tr>
-    <tr><td><strong>bundle</strong>（你写）</td>
-        <td>manifest + <code>ManagedController</code>；环境 adapter、真实证据、外部输入的释放确认</td>
-        <td>不碰事件日志、租约、资源 claim</td></tr>
+    <tr><th>Layer</th><th>Responsible for</th><th>Not responsible for</th></tr>
+    <tr><td>Kernel <code>core/</code></td>
+        <td>Frame binding (candidates renumbered <code>a1..an</code>), re-validation before execution, four receipt states, the three progress guards, a pure reducer, independent verifier acceptance, hard budgets</td>
+        <td>The model, the network, a browser, pi; the kernel depends on the policy protocol only</td></tr>
+    <tr><td>Host <code>host/</code></td>
+        <td>Idempotent start, exclusive resource declarations, lease and timeouts, append-only events, two-phase stop, crash quarantine, cognition broker</td>
+        <td>It does not know what environment you operate</td></tr>
+    <tr><td>Adapter layer <code>extensions/pi-jev.ts</code></td>
+        <td>Connects the host to pi: the <code>jev_loop</code> tool, slash commands, cognition delivery, session heartbeat, TUI exclusivity confirmation</td>
+        <td>Contains no site/device adapters</td></tr>
+    <tr><td><strong>bundle</strong> (you write it)</td>
+        <td>Manifest + <code>ManagedController</code>; environment adapter, real evidence, confirmation that external inputs were released</td>
+        <td>Does not touch the event log, lease or resource claims</td></tr>
   </table>
   <div class="callout tip">
-    <p><strong>命名提醒：</strong><code>jev-loop</code> 既指单环内核，也指“内核 + 宿主 + pi 扩展”这整个包；
-    工具叫 <code>jev_loop</code>，技能叫 <code>pi-jev</code>；<em>bundle 不是仓库里的组件</em>，而是项目侧行为包的契约名。</p>
+    <p><strong>Naming note:</strong> <code>jev-loop</code> refers both to the single-loop kernel and to
+    the whole package (kernel + host + pi extension); the tool is called <code>jev_loop</code> and the
+    skill <code>pi-jev</code>; <em>a bundle is not a component in this repository</em> — it is the
+    contract name for a project-side behavior package.</p>
   </div>
 </section>
 
 <section id="setup">
-  <h2>2. 准备环境</h2>
+  <h2>2. Prepare the environment</h2>
   <table>
-    <tr><th>需求</th><th>说明</th></tr>
-    <tr><td>Python ≥ 3.12</td><td>运行时<strong>零第三方依赖</strong>（<code>dependencies = []</code>），只用标准库</td></tr>
-    <tr><td>Linux / macOS / WSL</td><td>host 的资源声明用 Unix 的 <code>fcntl</code>，Windows 需在 WSL 内跑</td></tr>
-    <tr><td><a href="https://docs.astral.sh/uv/">uv</a>（推荐）或 pip</td><td>开发依赖只有 pytest 与 ruff</td></tr>
-    <tr><td>Node ≥ 22</td><td>Node 是 pi 自身的依赖，也用于跑扩展侧的 RPC 测试 <code>npm test</code></td></tr>
-    <tr><td>pi（可选）</td><td>只有走“在 pi 里用”这条路才需要</td></tr>
-    <tr><td>TypeSafe / Jev API key（可选）</td><td>仓库内所有测试与 demo 都不联网、不需要 key；自己接真实 Jev 时才要</td></tr>
+    <tr><th>Requirement</th><th>Notes</th></tr>
+    <tr><td>Python ≥ 3.12</td><td>The runtime has <strong>zero third-party dependencies</strong> (<code>dependencies = []</code>) and uses the standard library only</td></tr>
+    <tr><td>Linux / macOS / WSL</td><td>The host declares resources with Unix <code>fcntl</code>; on Windows run inside WSL</td></tr>
+    <tr><td><a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a> (recommended) or pip</td><td>The only development dependencies are pytest and ruff</td></tr>
+    <tr><td>Node ≥ 22</td><td>Node is a dependency of pi itself and is used for the extension-side RPC test <code>npm test</code></td></tr>
+    <tr><td>pi (optional)</td><td>Only needed for the "use it inside pi" path</td></tr>
+    <tr><td>A TypeSafe / Jev API key (optional)</td><td>Every test and demo in this repository is offline and needs no key; one is only needed when you connect a real Jev service</td></tr>
   </table>
-  <pre><code>git clone https://github.com/kevin-zhan/jev-loop.git
+  <pre><code>git clone https://github.com/kevin-zhan/jev-loop.git   # private repository: access required
 cd jev-loop
 uv sync</code></pre>
-  <p>不用 uv 也可以（包没有运行时依赖）：</p>
+  <p>Without uv (the package has no runtime dependencies):</p>
   <pre><code>python3 -m venv .venv
 ./.venv/bin/pip install -e .
 ./.venv/bin/jev-loop-demo --scenario clean</code></pre>
 </section>
 
 <section id="path-a">
-  <h2>3. 路径 A：当 Python 库用（不装 pi、不联网）</h2>
-  <p>先跑自带 demo 熟悉语义，三个场景分别演示“正常完成”“动作无效果后收窄候选”“可逆循环被挂起等待新信息”：</p>
-  <pre><code>uv run jev-loop-demo --scenario clean  # 正常收敛
-uv run jev-loop-demo --scenario noop   # 无效果动作 → 标死并收窄候选，继续推进
-uv run jev-loop-demo --scenario cycle  # 可逆循环 → suspended / awaiting_evidence，不烧满步数</code></pre>
-  <p>第三个场景不是失败：frame 重现且无可收窄动作时，内核直接挂起等新信息（<code>suspended / awaiting_evidence</code>）；
-  只有反复升级到上限才以 <code>cycle_detected</code> 结束——<code>README</code> 守卫表、<code>docs/design.md</code> 与
-  <code>tests/test_guards.py</code> 的两条测试分别覆盖这两条路径。以下是 <code>clean</code> 场景的实际输出：</p>
+  <h2>3. Path A: as a Python library (no pi, no network)</h2>
+  <p>Start with the built-in demo to get a feel for the semantics: the three scenarios show "a normal
+  finish", "an action with no effect narrows the candidate set", and "a reversible cycle is suspended
+  to wait for new information".</p>
+  <pre><code>uv run jev-loop-demo --scenario clean  # converges normally
+uv run jev-loop-demo --scenario noop   # a no-effect action is marked dead, the candidate set narrows, progress continues
+uv run jev-loop-demo --scenario cycle  # a reversible cycle is suspended (awaiting_evidence) instead of burning the step budget</code></pre>
+  <p>The third scenario is not a failure: when the frame reappears and no action can be narrowed, the
+  kernel suspends directly and waits for new information (<code>suspended / awaiting_evidence</code>);
+  only when escalations repeatedly hit the limit does it end with <code>cycle_detected</code>. The guard
+  table in <code>docs/design.md</code> and two tests in <code>tests/test_guards.py</code> cover these
+  two paths. This is exactly what the <code>clean</code> scenario prints:</p>
   <pre><code>status=succeeded stop_reason=None
 steps=3 executions=2 decisions=3 world={'a': True, 'b': True}
 verifications=['satisfied'] (only 'satisfied' counts as success)</code></pre>
-  <p>接自己的环境，只需要实现三个角色——环境、策略、验证器：</p>
+  <p>The demo is offline and uses the deterministic mock environment: it calls no paid Jev service and
+  does not validate any real business task.</p>
+  <p>To connect your own environment you implement three roles — environment, policy, verifier:</p>
   <pre><code>from jev_loop import Loop, TaskSpec
 from jev_loop.policies.jev import JevPolicy, http_request_fn
 
 loop = Loop(
     task=TaskSpec(
-        goal="开启深色模式",
-        success_criteria=("设置页显示深色模式已开启",),
+        goal="Turn on dark mode",
+        success_criteria=("the appearance page reports dark mode as enabled",),
     ),
     environment=my_adapter,                       # observe / offer / execute / query / validate
     policy=JevPolicy(request_fn=http_request_fn(api_key=os.environ["TYPESAFE_API_KEY"])),
-    verifier=my_verifier,                         # 独立证据；不接受模型的 DONE
+    verifier=my_verifier,                         # independent evidence; ignores the model's DONE
 )
 result = loop.run()
 print(result.status, result.stop_reason)</code></pre>
-  <p>要点：</p>
+  <p>This is an integration sketch, not a standalone runnable example: <code>my_adapter</code>,
+  <code>my_verifier</code> and the API key are yours to provide — an <code>Environment</code>
+  implementation, an independent <code>Verifier</code>, and a TypeSafe/Jev API key.</p>
+  <p>Key points:</p>
   <ul>
-    <li>策略返回的候选 id <strong>只在本帧有效</strong>；循环在执行前会重新校验观测 revision 与前置条件。</li>
-    <li><code>JevPolicy</code> 每次决策发一次请求到 <code>https://api.typesafe.ai/v1/systemone</code>；<code>http_request_fn</code> 是全仓唯一碰网络的地方，便于替换成假 requester 做离线测试。</li>
-    <li>环境 adapter 承诺三件事：能给什么观测、能执行哪些动作、未决操作怎么查询。内核不假设任何环境细节。</li>
+    <li>A candidate id returned by a policy is <strong>valid only inside its frame</strong>; before
+      execution the loop re-checks the observation revision and the preconditions.</li>
+    <li><code>JevPolicy</code> sends one request per decision to
+      <code>https://api.typesafe.ai/v1/systemone</code>; <code>http_request_fn</code> is the only place
+      in the repository that touches the network, which makes it easy to swap in a fake requester for
+      offline tests.</li>
+    <li>An environment adapter promises three things: which observations it can produce, which actions
+      it can execute, and how unresolved operations are queried. The kernel assumes nothing about the
+      environment.</li>
   </ul>
 </section>
 
 <section id="path-b">
-  <h2>4. 路径 B：在 pi 里用（pi-jev 扩展）</h2>
-  <p>仓库根就是一个 pi package（<code>package.json</code> 声明了 <code>extensions/pi-jev.ts</code> 与 <code>skills/pi-jev</code>）。</p>
-  <pre><code># 从 GitHub 直接装（建议钉版本，便于复现）
-pi install git:github.com/kevin-zhan/jev-loop@v0.2.0
+  <h2>4. Path B: inside pi (the pi-jev extension)</h2>
+  <p>The repository root is itself a pi package (<code>package.json</code> declares
+  <code>extensions/pi-jev.ts</code> and <code>skills/pi-jev</code>). Pi itself is not installed by this
+  repository: install it using its official installation instructions (see the
+  <a href="https://github.com/earendil-works/pi">pi repository</a>), make sure Python 3.12+ is available,
+  then register this local package from the clone:</p>
+  <pre><code>git clone https://github.com/kevin-zhan/jev-loop.git   # private repository: access required
+cd jev-loop
+pi install .            # registers this local package, referencing the clone in place
 
-# 或者临时试一把，不写设置
-pi -e https://github.com/kevin-zhan/jev-loop</code></pre>
-  <p>装好后在 pi 里 <code>/reload</code>；它提供：</p>
+# optional, unpinned remote install (the repository is private, so access is still required):
+# pi install git:github.com/kevin-zhan/jev-loop
+
+# or a temporary try that writes no settings:
+# pi -e https://github.com/kevin-zhan/jev-loop</code></pre>
+  <p>Run <code>/reload</code> in an open pi session afterwards; the package provides:</p>
   <table>
-    <tr><th>入口</th><th>用途</th></tr>
-    <tr><td><code>jev_loop</code> 工具</td><td><code>start / list / inspect / events / update / respond / stop / release_resources</code></td></tr>
-    <tr><td><code>/jev-runs</code></td><td>看当前 session 拥有的 run</td></tr>
-    <tr><td><code>/jev-self-test</code></td><td>离线跑一遍真实进程验收（认知等待期间继续推进、结束后释放输入）</td></tr>
-    <tr><td><code>/jev-stop-all</code></td><td>交互确认后停止本 session 的全部活动 run</td></tr>
-    <tr><td><code>pi-jev</code> skill</td><td>教 agent 何时用、怎么处理 cognition、怎么验收</td></tr>
+    <tr><th>Entry point</th><th>Purpose</th></tr>
+    <tr><td><code>jev_loop</code> tool</td><td><code>start / list / inspect / events / update / respond / stop / release_resources</code></td></tr>
+    <tr><td><code>/jev-runs</code></td><td>Shows the runs owned by the current session</td></tr>
+    <tr><td><code>/jev-self-test</code></td><td>Runs an offline acceptance of the real process (keeps progressing while a cognition job is pending, releases inputs when stopped)</td></tr>
+    <tr><td><code>/jev-stop-all</code></td><td>Stops all active runs of this session after interactive confirmation</td></tr>
+    <tr><td><code>pi-jev</code> skill</td><td>Teaches the agent when to use it, how to handle cognition, and how to verify</td></tr>
   </table>
   <ul>
-    <li>扩展默认用 <code>python3</code>；别的解释器用 <code>JEV_LOOP_PYTHON=/path/to/python3.12</code> 指定。</li>
-    <li>扩展会把 <code>&lt;pkg&gt;/src</code> 加进子进程 <code>PYTHONPATH</code>，<strong>因此不需要安装 Python 包</strong>，只要系统里有 Python 3.12+。</li>
-    <li>启动一个 run 时要给：<code>bundle</code>（项目内 manifest）、<code>goal</code>、<code>inputs</code>、<code>resourceKeys</code>、<code>idempotencyKey</code>、<code>maxRuntimeSeconds</code>。任务内容经 stdin 传输，不进 shell 参数。</li>
+    <li>The extension uses <code>python3</code> by default; point it elsewhere with
+      <code>JEV_LOOP_PYTHON=/path/to/python3.12</code>.</li>
+    <li>The extension adds <code>&lt;pkg&gt;/src</code> to the child process's <code>PYTHONPATH</code>,
+      <strong>so the Python package does not have to be installed</strong> — a Python 3.12+ interpreter
+      on the system is enough.</li>
+    <li>Starting a run requires: <code>bundle</code> (a manifest inside the project), <code>goal</code>,
+      <code>inputs</code>, <code>resourceKeys</code>, <code>idempotencyKey</code>,
+      <code>maxRuntimeSeconds</code>. Task content travels through stdin, not through shell arguments.</li>
   </ul>
   <div class="callout warn">
-    <p>pi package 以完整系统权限运行扩展代码。安装第三方 package 前先读源码；本仓的 bundle manifest 同样是<em>代码信任边界</em>，宿主只接受当前项目目录内的 manifest。</p>
+    <p>A pi package runs extension code with full system privileges. Read the source before installing a
+    third-party package; this repository's bundle manifests are equally a <em>code trust boundary</em>,
+    and the host only accepts manifests inside the current trusted project directory.</p>
   </div>
 </section>
 
 <section id="path-c">
-  <h2>5. 路径 C：接自己的宿主</h2>
-  <p>不依赖 pi 也能用。宿主 API 从 <code>jev_loop.host</code> 导出，命令行入口 <code>jev-loop-host</code> 提供
-  <code>rpc</code>（stdin 收一个 JSON、stdout 回一个 JSON）与内部 <code>worker</code>：</p>
+  <h2>5. Path C: attach your own host</h2>
+  <p>pi is not required. The host API is exported from <code>jev_loop.host</code>, and the command-line
+  entry point <code>jev-loop-host</code> offers <code>rpc</code> (one JSON in on stdin, one JSON out on
+  stdout) plus the internal <code>worker</code>:</p>
   <pre><code>echo '{
   "action": "start",
   "owner_id": "engineer-or-service-id",
   "idempotency_key": "daily-check-2026-09-20",
   "project_root": "/srv/my-project",
   "bundle": "/srv/my-project/.jev/bundles/my-bundle/bundle.json",
-  "task": {"goal": "检查站点并留下证据", "inputs": {"date": "2026-09-20"}},
+  "task": {"goal": "Check the site and leave evidence", "inputs": {"date": "2026-09-20"}},
   "resource_keys": ["browser:work-profile"],
   "max_runtime_seconds": 600
 }' | uv run jev-loop-host rpc</code></pre>
   <table>
-    <tr><th>action</th><th>必须字段</th></tr>
+    <tr><th>action</th><th>Required fields</th></tr>
     <tr><td><code>start</code></td><td><code>owner_id · idempotency_key · project_root · bundle · task.goal</code></td></tr>
-    <tr><td><code>list</code> / <code>inspect</code></td><td><code>owner_id</code>（+ <code>run_id</code>）</td></tr>
-    <tr><td><code>events</code></td><td><code>owner_id · run_id</code>，可选 <code>after</code>（游标）与 <code>limit</code>（≤500）</td></tr>
-    <tr><td><code>heartbeat</code> / <code>update</code> / <code>stop</code> / <code>respond</code></td><td>转成对 run 的命令；<code>respond</code> 需 <code>run_id · job_id · expected_job_version</code></td></tr>
-    <tr><td><code>release_resources</code></td><td>仅在独立确认外部输入已释放后使用（见第 7 节）</td></tr>
+    <tr><td><code>list</code> / <code>inspect</code></td><td><code>owner_id</code> (+ <code>run_id</code>)</td></tr>
+    <tr><td><code>events</code></td><td><code>owner_id · run_id</code>, optional <code>after</code> (cursor) and <code>limit</code> (≤500)</td></tr>
+    <tr><td><code>heartbeat</code> / <code>update</code> / <code>stop</code> / <code>respond</code></td><td>Turned into commands for a run; <code>respond</code> needs <code>run_id · job_id · expected_job_version</code></td></tr>
+    <tr><td><code>release_resources</code></td><td>Only after independently confirming that external inputs were released (see section 7)</td></tr>
   </table>
   <ul>
-    <li><strong>幂等</strong>：<code>(owner_id, project_root, idempotency_key)</code> 唯一映射一个 run，重复调用不会重启控制器。</li>
-    <li><strong>租约</strong>：非 detached run 默认 30 秒，需要你的宿主定期 heartbeat；不 heartbeat 会让 worker 请求停止并释放输入。</li>
-    <li><strong>状态在磁盘上</strong>，不在你的会话历史里：默认 <code>~/.local/state/jev-loop/</code>，用 <code>JEV_LOOP_HOME</code> 改写。会话压缩、reload 都不会重放动作。</li>
+    <li><strong>Idempotency</strong>: <code>(owner_id, project_root, idempotency_key)</code> maps to
+      exactly one run; a repeated call does not restart the controller.</li>
+    <li><strong>Lease</strong>: non-detached runs default to 30 seconds and need regular heartbeats from
+      your host; without them the worker requests a stop and releases its inputs.</li>
+    <li><strong>State is on disk</strong>, not in your session history: by default
+      <code>~/.local/state/jev-loop/</code>, overridable with <code>JEV_LOOP_HOME</code>. Compaction and
+      reloads never replay actions.</li>
   </ul>
 </section>
 
 <section id="bundle">
-  <h2>6. 写自己的 bundle</h2>
-  <p>契约正文在 <code>docs/pi-integration.md</code> 的 “Bundle manifest” 一节；可运行的模板是
-  <code>examples/bundles/switchboard/</code>（manifest + 24 行 controller，已被
-  <code>tests/test_host_service.py</code> 真实加载）。最小清单如下。</p>
+  <h2>6. Write your own bundle</h2>
+  <p>The contract text is the "Bundle manifest" section of <code>docs/pi-integration.md</code>; the
+  runnable template is <code>examples/bundles/switchboard/</code> (a manifest plus a 24-line controller,
+  really loaded by <code>tests/test_host_service.py</code>). The minimal checklist follows.</p>
 
-  <h3>6.1 manifest</h3>
+  <h3>6.1 Manifest</h3>
   <pre><code>{
   "schema_version": 1,
   "entrypoint": "controller:build",
   "python_path": ".",
   "config": {"adapter": "project-specific settings"}
 }</code></pre>
-  <p>宿主会强制校验：manifest 必须在 <code>project_root</code> 内、<code>schema_version == 1</code>、
-  <code>entrypoint</code> 形如 <code>module:function</code>、<code>python_path</code> 目录存在（相对 manifest 目录解析并插入 <code>sys.path</code>）。
-  <code>config</code> 要求是 JSON <strong>object</strong>（宿主会 <code>dict(...)</code> 后与 <code>bundle_config</code> 合并），字符串或数字会被拒绝。</p>
+  <p>The host enforces: the manifest must be inside <code>project_root</code>,
+  <code>schema_version == 1</code>, <code>entrypoint</code> shaped like <code>module:function</code>,
+  and the <code>python_path</code> directory must exist (resolved relative to the manifest directory and
+  inserted into <code>sys.path</code>). <code>config</code> must be a JSON <strong>object</strong> (the
+  host does <code>dict(...)</code> and merges it with <code>bundle_config</code>); strings or numbers are
+  rejected.</p>
   <div class="callout tip">
-    <p><strong>路径不要猜。</strong>相对路径（<code>.venv/bin/python</code>、<code>.env</code>）要相对 manifest 的 <code>python_path</code> 解析，
-    而不是宿主会话的当前目录——否则换一个目录启动就失败。</p>
+    <p><strong>Do not guess paths.</strong> Relative paths (<code>.venv/bin/python</code>,
+    <code>.env</code>) must be resolved relative to the manifest's <code>python_path</code>, not the
+    host session's current directory — otherwise starting from another directory fails.</p>
   </div>
 
-  <h3>6.2 controller 四个方法</h3>
+  <h3>6.2 The four controller methods</h3>
   <pre><code>def build(spec: RunSpec, services: RuntimeServices, config: dict) -&gt; ManagedController:
     ...
 
@@ -309,18 +354,19 @@ class ManagedController(Protocol):
     def update(self, task: Mapping[str, Json], patch: Mapping[str, Json]) -&gt; None: ...
     def request_stop(self, reason: str) -&gt; None: ...</code></pre>
   <table>
-    <tr><th>方法</th><th>线程/时机</th><th>你必须保证</th></tr>
-    <tr><td><code>run</code></td><td>engine 线程</td>
-        <td>返回 terminal 的 <code>ControllerResult</code>；只有确认所有外部输入已释放时 <code>resources_released=True</code>，强杀子进程等不确定路径必须 <code>False</code></td></tr>
-    <tr><td><code>snapshot</code></td><td>coordinator 线程</td>
-        <td>线程安全；只放有界、可 JSON 序列化的摘要（完整证据写 <code>run_dir/artifacts/</code>）</td></tr>
-    <tr><td><code>update</code></td><td>coordinator 线程</td>
-        <td>只在用户显式改目标/约束时被调用；不要用它偷偷改任务</td></tr>
-    <tr><td><code>request_stop</code></td><td>coordinator 线程（异常收尾路径下也可能由 engine 线程调用）</td>
-        <td>线程安全、<strong>同步</strong>释放 held inputs；不得等模型或网络</td></tr>
+    <tr><th>Method</th><th>Thread/timing</th><th>What you must guarantee</th></tr>
+    <tr><td><code>run</code></td><td>engine thread</td>
+        <td>Returns a terminal <code>ControllerResult</code>; <code>resources_released=True</code> only after confirming all external inputs are released — uncertain paths such as force-killing a child process must be <code>False</code></td></tr>
+    <tr><td><code>snapshot</code></td><td>coordinator thread</td>
+        <td>Thread-safe; only a bounded, JSON-serializable summary (full evidence goes to <code>run_dir/artifacts/</code>)</td></tr>
+    <tr><td><code>update</code></td><td>coordinator thread</td>
+        <td>Only called when the user explicitly changes the goal/constraints; do not use it to change the task secretly</td></tr>
+    <tr><td><code>request_stop</code></td><td>coordinator thread (may also be called by the engine thread during abnormal shutdown)</td>
+        <td>Thread-safe, releases held inputs <strong>synchronously</strong>; must not wait for a model or the network</td></tr>
   </table>
-  <p>已经有内核 <code>Loop</code> 的话，直接用 <code>LoopController</code> 包起来即可（<code>on_wake</code>、<code>on_update</code>、
-  <code>release</code>、<code>snapshot_extra</code> 是可选钩子）：</p>
+  <p>If you already have a kernel <code>Loop</code>, wrap it in <code>LoopController</code>
+  (<code>on_wake</code>, <code>on_update</code>, <code>release</code> and <code>snapshot_extra</code> are
+  optional hooks):</p>
   <pre><code>from jev_loop import Loop, TaskSpec
 from jev_loop.host import LoopController
 
@@ -330,123 +376,145 @@ def build(spec, services, config):
                 environment=environment, policy=my_policy, verifier=MyVerifier(environment))
     return LoopController(loop, services, snapshot_extra=lambda: {"world": environment.summary()})</code></pre>
 
-  <h3>6.3 边跑边问模型（runtime cognition）</h3>
-  <p>不要在 <code>run()</code> 里阻塞等宿主回话。发起 job <strong>立即返回</strong>，继续干别的，稍后轮询：</p>
+  <h3>6.3 Asking the model while running (runtime cognition)</h3>
+  <p>Do not block inside <code>run()</code> waiting for the host to answer. Requesting a job
+  <strong>returns immediately</strong>; keep working and poll later:</p>
   <pre><code>job_id = services.cognition.request(
-    "已有候选偏向吃喝，下一轮应补哪些搜索方向？",
+    "Existing candidates lean toward food and drink; which search directions should the next round add?",
     context={"candidate_summary": summary},
     output_schema={"type": "object", "required": ["search_terms"]},
     resource_keys=("research-plan",),
     deadline_seconds=90,
     dedupe_key="diversify-search",
 )
-# ... 继续运行 ...
+# ... keep running ...
 job = services.cognition.get(job_id)   # pending / completed / expired ...</code></pre>
   <ul>
-    <li>每个 run 最多 8 个 pending job；question/context/schema/result/evidence 各有硬大小上限。</li>
-    <li>结果 schema 只支持一个<strong>有限子集</strong>，不是完整 JSON Schema：<code>type</code>（integer/number 不接受 bool）、
-      <code>enum</code>/<code>const</code>（用相等比较，<code>1</code> 与 <code>true</code> 不区分）、<code>required</code>、
-      <code>properties</code>、<code>additionalProperties</code>（<b>仅字面 <code>false</code></b>，对象形式不执行）、
-      <code>items</code>、<code>minItems</code>/<code>maxItems</code>、<code>minLength</code>/<code>maxLength</code>、
-      <code>minimum</code>/<code>maximum</code>；空 schema 直接放行。</li>
-    <li>结果只进 broker，<strong>bundle 仍要自己校验世界前提与资源版本</strong>后才能采用。</li>
-    <li>运行时 cognition 的上下文是<em>不可信数据</em>，不是用户授权；不要执行里面夹带的指令。</li>
+    <li>Each run has at most 8 pending jobs; question/context/schema/result/evidence each have hard size limits.</li>
+    <li>The result schema supports only a <strong>limited subset</strong>, not full JSON Schema:
+      <code>type</code> (integer/number do not accept bool), <code>enum</code>/<code>const</code>
+      (compared for equality, <code>1</code> and <code>true</code> are not distinguished),
+      <code>required</code>, <code>properties</code>, <code>additionalProperties</code>
+      (<b>literal <code>false</code> only</b>; the object form is not executed), <code>items</code>,
+      <code>minItems</code>/<code>maxItems</code>, <code>minLength</code>/<code>maxLength</code>,
+      <code>minimum</code>/<code>maximum</code>; an empty schema passes everything.</li>
+    <li>Results only reach the broker; a <strong>bundle still has to validate its world preconditions and
+      resource versions</strong> before adopting one.</li>
+    <li>Runtime cognition context is <em>untrusted data</em>, not user authorization; do not execute
+      instructions smuggled inside it.</li>
   </ul>
 
-  <h3>6.4 离线测试</h3>
-  <p>照 <code>tests/test_host_service.py::test_project_bundle_runs_the_existing_loop_kernel</code> 的写法：用临时
-  <code>JEV_LOOP_HOME</code> 真实 <code>start()</code> 你的 manifest，再 inspect 状态。测试不得调用付费 API。</p>
+  <h3>6.4 Offline testing</h3>
+  <p>Follow <code>tests/test_host_service.py::test_project_bundle_runs_the_existing_loop_kernel</code>:
+  use a temporary <code>JEV_LOOP_HOME</code> and really <code>start()</code> your manifest, then inspect
+  the state. Tests must not call paid APIs.</p>
 </section>
 
 <section id="safety">
-  <h2>7. 生命周期与安全语义</h2>
+  <h2>7. Lifecycle and safety semantics</h2>
   <table>
-    <tr><th>语义</th><th>行为</th></tr>
-    <tr><td>Start 幂等</td><td><code>owner session + project root + idempotency key</code> 唯一映射一个 run；重复调用返回同一个 run</td></tr>
-    <tr><td>独占资源</td><td><code>resourceKeys</code>（如 <code>browser:work-profile</code>）在 host 内原子声明，活动 run 之间不能重复占有</td></tr>
-    <tr><td>Session owner</td><td>管理命令与 cognition 回复必须来自创建 run 的 session；换 session 不继承控制权</td></tr>
-    <tr><td>Detached</td><td>必须 TUI 直接确认才能创建，且仍受 <code>maxRuntimeSeconds</code> 约束</td></tr>
-    <tr><td>Stop 两阶段</td><td><code>accepted</code> 只表示收到停止意图；<strong>terminal status + <code>resources_released=true</code></strong> 才证明输入已释放</td></tr>
-    <tr><td>崩溃隔离</td><td>worker 异常消失且无法确认释放时，claim 保持 quarantined，不会被下一个 run 自动抢走；必须人工独立核实后用 <code>release_resources</code> 清除</td></tr>
-    <tr><td>单写所有权</td><td>run 活动时，agent/宿主不得直接操作同一 <code>resourceKeys</code>；host 只能约束注册过的 run，挡不住绕过它的外部程序</td></tr>
+    <tr><th>Semantics</th><th>Behavior</th></tr>
+    <tr><td>Idempotent start</td><td><code>owner session + project root + idempotency key</code> maps to one run; a repeated call returns the same run</td></tr>
+    <tr><td>Exclusive resources</td><td><code>resourceKeys</code> (for example <code>browser:work-profile</code>) are declared atomically inside the host; active runs cannot hold the same one</td></tr>
+    <tr><td>Session owner</td><td>Management commands and cognition replies must come from the session that created the run; a different session does not inherit control</td></tr>
+    <tr><td>Detached</td><td>Can only be created with direct TUI confirmation, and is still bounded by <code>maxRuntimeSeconds</code></td></tr>
+    <tr><td>Two-phase stop</td><td><code>accepted</code> only means the stop intent was received; <strong>terminal status + <code>resources_released=true</code></strong> is what proves the inputs were released</td></tr>
+    <tr><td>Crash isolation</td><td>When a worker disappears without a confirmable release, the claim stays quarantined and is not taken over automatically by the next run; a human must independently verify and then clear it with <code>release_resources</code></td></tr>
+    <tr><td>Single-writer ownership</td><td>While a run is active, no agent/host may operate the same <code>resourceKeys</code> directly; the host can only constrain registered runs and cannot stop an external program from bypassing it</td></tr>
   </table>
   <div class="callout danger">
-    <p><strong>进程外 watchdog 是第一道保护。</strong>Python 进程被 <code>SIGKILL</code> 时任何 cleanup 都不保证执行；
-    真实设备必须另有一层 watchdog。不要把 cookie、token、原始隐私资料写进 event 或 snapshot。</p>
+    <p><strong>An out-of-process watchdog is the first line of protection.</strong> No cleanup is
+    guaranteed when a Python process is <code>SIGKILL</code>ed; a real device needs another watchdog
+    layer. Never write cookies, tokens or raw private data into events or snapshots.</p>
   </div>
 </section>
 
 <section id="verify">
-  <h2>8. 验证与“完成”的口径</h2>
-  <p>在克隆下来的仓库里，这三条命令应当全绿（离线，不调用模型；本文实测：pytest 65 passed、ruff
-  <code>All checks passed!</code>、npm test 1 pass）：</p>
-  <pre><code>uv run pytest              # 内核 + 宿主 + bundle 契约，全部离线
+  <h2>8. Verification and what "done" means</h2>
+  <p>These commands should pass in the cloned repository (all offline; no model calls):</p>
+  <pre><code>uv run pytest              # kernel + host + bundle contract, all offline
 uv run ruff check .
-npm test                   # pi RPC 真实加载扩展，不调用模型</code></pre>
-  <p>判断一次 run 成功，看这四件事，而不是进程还活着：</p>
+npm test                   # real pi RPC load of the extension, no model calls</code></pre>
+  <p>A green run means: <code>pytest</code> reports no failures, <code>ruff</code> reports
+  <code>All checks passed!</code>, and <code>npm test</code> reports the RPC load test passing. The exact
+  counts are deliberately not pinned here; treat the commands, not a number, as the check.</p>
+  <p>Judge a run by these four things, not by whether the process is still alive:</p>
   <ol>
-    <li><code>inspect</code> 的 <code>status</code> 是 terminal 的 <code>succeeded</code>（<code>failed</code>/<code>cancelled</code> 各自有 <code>stop_reason</code>）；</li>
-    <li><code>resources_released: true</code>；</li>
-    <li>bundle 自己的证据（<code>run_dir/artifacts/</code>）里 verifier 给出 <code>satisfied</code>；</li>
-    <li>事件日志 <code>events.jsonl</code> 能解释它是怎么走到这一步的。</li>
+    <li><code>inspect</code>'s <code>status</code> is the terminal <code>succeeded</code> (<code>failed</code>/<code>cancelled</code> each carry their own <code>stop_reason</code>);</li>
+    <li><code>resources_released: true</code>;</li>
+    <li>the bundle's own evidence (under <code>run_dir/artifacts/</code>) contains a verifier verdict of <code>satisfied</code>;</li>
+    <li>the event log <code>events.jsonl</code> explains how it got there.</li>
   </ol>
   <div class="callout warn">
-    <p>“工具调用返回了” ≠ “动作生效了” ≠ “任务完成了”。内核把这三件事分别记录：动作回执四态
-    <code>completed / rejected / pending / unknown</code>；<code>request_finish</code> 只是请求验证，只有 verifier
-    的 <code>satisfied</code> 才算成功，<code>unknown</code> 保持 unknown。</p>
+    <p>"The tool call returned" ≠ "the action took effect" ≠ "the task is done". The kernel records these
+    three separately: a receipt has four states
+    <code>completed / rejected / pending / unknown</code>; <code>request_finish</code> only requests
+    verification, only the verifier's <code>satisfied</code> counts as success, and <code>unknown</code>
+    stays unknown.</p>
   </div>
 </section>
 
 <section id="pitfalls">
-  <h2>9. 常见坑</h2>
+  <h2>9. Common pitfalls</h2>
   <ul>
-    <li><strong>不要为了“更顺畅”移除守卫</strong>（无效果 / 重复 / 循环）。确定性策略下它们是唯一的逃生阀：一步要么改变帧，要么停下来。</li>
-    <li><strong>别把模型的 DONE 当验收</strong>：策略只能 <code>request_finish</code>，verifier 才说了算。</li>
-    <li><strong>pending / unknown 只许查询，不许重发</strong>；<code>idempotency=NONE</code> 的动作永远不能盲目重试。</li>
-    <li><strong>帧绑定</strong>：只能返回本帧的候选 id，不要自己拼动作名或 URL；内核会拒绝越权候选。</li>
-    <li><strong>dead_actions 作用域是当前观测</strong>：观测一变就清空，别在外面自己维护“永久黑名单”。</li>
-    <li><strong>候选覆盖问题内核发现不了</strong>：正确动作不在候选集里，只能靠 adapter 与评测；内核提供 <code>complete</code> 标记与 <code>blocked</code> 出口。</li>
-    <li><strong>观测有延迟</strong>：动作效果晚于观测会被判一次 no-effect 并标死；这是有意的保守策略，效果出现后会自动回到候选集。</li>
-    <li><strong>第一版只支持单环境、单写执行</strong>；同一 <code>resourceKeys</code> 想并行写请先拆成不同资源。</li>
+    <li><strong>Do not remove the guards</strong> (no-effect / repeat / cycle) to "make the loop smoother".
+      For a deterministic policy they are the only escape valves: a step either changes the frame or stops.</li>
+    <li><strong>Do not accept the model's DONE</strong>: a policy can only <code>request_finish</code>;
+      the verifier decides.</li>
+    <li><strong>pending / unknown may only be queried, never resent</strong>; an action with
+      <code>idempotency=NONE</code> is never retried blindly.</li>
+    <li><strong>Frame binding</strong>: return only candidate ids from the current frame; do not piece
+      together action names or URLs yourself — the kernel rejects unauthorized candidates.</li>
+    <li><strong>dead_actions are scoped to the current observation</strong>: they clear when the
+      observation changes; do not keep a "permanent blacklist" outside the kernel.</li>
+    <li><strong>The kernel cannot detect candidate-coverage gaps</strong>: if the right action is not in
+      the candidate set, only the adapter and evaluation can catch it; the kernel offers a
+      <code>complete</code> flag and a <code>blocked</code> exit.</li>
+    <li><strong>Observations can lag</strong>: an effect that arrives after the observation is counted as
+      one no-effect step; this is deliberately conservative, and the action returns to the candidate set
+      once the effect shows up.</li>
+    <li><strong>The first version supports one environment and single-writer execution only</strong>; to
+      write in parallel, split into different <code>resourceKeys</code> first.</li>
   </ul>
 </section>
 
 <section id="map">
-  <h2>10. 目录地图</h2>
+  <h2>10. Directory map</h2>
   <table>
-    <tr><th>路径</th><th>内容</th></tr>
-    <tr><td><code>src/jev_loop/core/</code></td><td>state、events、reduce、frame、guards、loop —— 显式状态内核</td></tr>
-    <tr><td><code>src/jev_loop/policies/</code></td><td><code>scripted</code>（离线确定性）、<code>jev</code>（问题构建与答案解析，唯一碰网络处）</td></tr>
-    <tr><td><code>src/jev_loop/adapters/</code>、<code>verifiers/</code>、<code>stores/</code></td><td>可注入故障的 mock 环境、谓词验证器、内存 / JSONL 事件存储</td></tr>
-    <tr><td><code>src/jev_loop/host/</code></td><td>managed host：租约、认知 broker、bundle contract、事件与命令交换</td></tr>
-    <tr><td><code>extensions/pi-jev.ts</code></td><td>pi 工具面、后台事件投递、session heartbeat</td></tr>
-    <tr><td><code>skills/pi-jev/</code></td><td>agent 使用手册（何时用、怎么处理 cognition、怎么验收）</td></tr>
-    <tr><td><code>examples/bundles/switchboard/</code></td><td>最小 bundle 模板（本仓测试会真实加载它）</td></tr>
-    <tr><td><code>docs/design.md</code>、<code>docs/pi-integration.md</code></td><td>内核不变量与守卫语义；pi 集成 / bundle 契约正文</td></tr>
-    <tr><td><code>tests/</code></td><td>全部离线；<code>tests/pi-extension/</code> 用 pi RPC 真实加载扩展</td></tr>
-    <tr><td><code>~/.local/state/jev-loop/runs/&lt;run-id&gt;/</code></td><td>运行时数据：<code>spec.json · events.jsonl · status.json · inbox/ acks/ · artifacts/</code></td></tr>
+    <tr><th>Path</th><th>Contents</th></tr>
+    <tr><td><code>src/jev_loop/core/</code></td><td>state, events, reduce, frame, guards, loop — the explicit-state kernel</td></tr>
+    <tr><td><code>src/jev_loop/policies/</code></td><td><code>scripted</code> (offline, deterministic), <code>jev</code> (question building and answer parsing, the only network caller)</td></tr>
+    <tr><td><code>src/jev_loop/adapters/</code>, <code>verifiers/</code>, <code>stores/</code></td><td>A mock environment with injectable faults, a predicate verifier, in-memory / JSONL event stores</td></tr>
+    <tr><td><code>src/jev_loop/host/</code></td><td>The managed host: lease, cognition broker, bundle contract, event and command exchange</td></tr>
+    <tr><td><code>extensions/pi-jev.ts</code></td><td>The pi tool surface, background event delivery, session heartbeat</td></tr>
+    <tr><td><code>skills/pi-jev/</code></td><td>The agent manual (when to use it, how to handle cognition, how to verify)</td></tr>
+    <tr><td><code>examples/bundles/switchboard/</code></td><td>The minimal bundle template (really loaded by this repository's tests)</td></tr>
+    <tr><td><code>docs/design.md</code>, <code>docs/pi-integration.md</code></td><td>Kernel invariants and guard semantics; pi integration and the bundle contract body</td></tr>
+    <tr><td><code>tests/</code></td><td>All offline; <code>tests/pi-extension/</code> loads the extension with real pi RPC</td></tr>
+    <tr><td><code>~/.local/state/jev-loop/runs/&lt;run-id&gt;/</code></td><td>Runtime data: <code>spec.json · events.jsonl · status.json · inbox/ acks/ · artifacts/</code></td></tr>
   </table>
 </section>
 
 <section id="publish">
-  <h2>11. 仓库维护（所有者视角）</h2>
-  <p>这一节不是给使用者的，记的是仓库现状与发版约定：</p>
+  <h2>11. Repository maintenance (owner's view)</h2>
+  <p>This section is not for users; it records the repository's current state and release conventions:</p>
   <table>
-    <tr><th>项</th><th>现状 / 约定</th></tr>
-    <tr><td>许可证</td><td><code>LICENSE</code> = MIT（Copyright (c) 2026 kevin-zhan）；<code>pyproject.toml</code> 与 <code>package.json</code> 都标了 <code>MIT</code></td></tr>
-    <tr><td>CI</td><td><code>.github/workflows/ci.yml</code>：<code>uv run pytest</code> + <code>uv run ruff check .</code>，另有一个 job 装 pi 后跑 <code>npm test</code></td></tr>
-    <tr><td>设计规范</td><td><code>spec/</code>（questions / state / fixture）已纳入版本控制</td></tr>
-    <tr><td>发版</td><td>版本号在 <code>pyproject.toml</code> 与 <code>package.json</code> 同步；<code>git tag vX.Y.Z &amp;&amp; git push origin vX.Y.Z</code></td></tr>
-    <tr><td>文档语言</td><td>中文为主；README 顶部有一段英文摘要，英文读者从那里进入</td></tr>
-    <tr><td>隐私</td><td>仓库内测试与 demo 都不需要 key；<code>.gitignore</code> 排除 <code>.venv/ .env .env.* artifacts/</code>；提交前用 <code>git grep -i</code> 自查 token、cookie、内网地址</td></tr>
+    <tr><th>Item</th><th>State / convention</th></tr>
+    <tr><td>License</td><td><code>LICENSE</code> = MIT (Copyright (c) 2026 kevin-zhan); both <code>pyproject.toml</code> and <code>package.json</code> declare <code>MIT</code></td></tr>
+    <tr><td>CI</td><td><code>.github/workflows/ci.yml</code>: <code>uv run pytest</code> + <code>uv run ruff check .</code>, plus a job that installs pi and runs <code>npm test</code></td></tr>
+    <tr><td>Specifications</td><td><code>spec/</code> (questions / state / fixture) is under version control</td></tr>
+    <tr><td>Releases</td><td>The version number is kept in sync between <code>pyproject.toml</code> and <code>package.json</code>; <code>git tag vX.Y.Z &amp;&amp; git push origin vX.Y.Z</code>. No tags are currently published</td></tr>
+    <tr><td>Documentation language</td><td>English is canonical; every English document has an information-equal Chinese copy (<code>*.zh-CN.md</code> / <code>*.zh-CN.html</code>); <code>AGENTS.md</code> and <code>skills/pi-jev/SKILL.md</code> are English only; code comments, runtime messages and commit messages are English</td></tr>
+    <tr><td>Privacy</td><td>Tests and demos in this repository need no key; <code>.gitignore</code> excludes <code>.venv/ .env .env.* artifacts/</code>; before committing, use <code>git grep -i</code> to check for tokens, cookies and internal addresses</td></tr>
   </table>
 </section>
 
 </main>
 
 <footer>
-  <p>本文只做上手说明；任何“性能提升”“比 X 快 N 倍”的说法都应以你自己环境下的同条件实测为准，
-  仓库文档里记录的实测数字都注明了条件与日期。</p>
+  <p>This document is an onboarding walkthrough only. Any claim of "performance improvement" or
+  "N times faster than X" should be measured under equal conditions in your own environment; measured
+  numbers recorded elsewhere in the repository state their conditions and dates.</p>
 </footer>
 
 </div>
@@ -456,13 +524,13 @@ npm test                   # pi RPC 真实加载扩展，不调用模型</code><
     var btn = document.createElement('button');
     btn.className = 'copy';
     btn.type = 'button';
-    btn.textContent = '复制';
+    btn.textContent = 'Copy';
     btn.addEventListener('click', function () {
       var text = pre.querySelector('code') ? pre.querySelector('code').innerText : pre.innerText;
       navigator.clipboard.writeText(text).then(function () {
-        btn.textContent = '已复制';
-        setTimeout(function () { btn.textContent = '复制'; }, 1200);
-      }, function () { btn.textContent = '复制失败'; });
+        btn.textContent = 'Copied';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1200);
+      }, function () { btn.textContent = 'Copy failed'; });
     });
     pre.appendChild(btn);
   });

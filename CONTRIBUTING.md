@@ -1,9 +1,11 @@
-# 贡献指南
+# Contributing
 
-Contributions are welcome. Issues and pull requests are handled on GitHub; this file is the
-short version of what a change has to satisfy.
+**English** | [简体中文](CONTRIBUTING.zh-CN.md)
 
-## 开发环境
+Contributions are welcome. Issues and pull requests are handled on GitHub; this file is the short
+version of what a change has to satisfy.
+
+## Development environment
 
 ```sh
 git clone https://github.com/kevin-zhan/jev-loop.git
@@ -11,38 +13,48 @@ cd jev-loop
 uv sync
 ```
 
-需要 Python 3.12+；运行时零第三方依赖。`npm test`（pi RPC 真实加载扩展）额外需要 Node 与 pi CLI。
+Python 3.12+ is required and the runtime has zero third-party dependencies. `npm test` (which loads the
+pi package over RPC) additionally needs Node and the pi CLI.
 
-## 提交前必须通过
+## Checks that must pass before a commit
 
 ```sh
-uv run pytest          # 全部离线，不调用付费 API
+uv run pytest          # everything is offline; no paid APIs are called
 uv run ruff check .
-npm test               # 改到 extensions/ 或 package.json 时
+npm test               # only needed when extensions/ or package.json changed
 ```
 
-- 测试不得调用付费模型；需要验证真实形状时写显式脚本，并在 PR 里说明成本。
-- 新增行为要有对应测试：帧绑定被拒、四态回执、未决操作不重发、无效果动作收窄候选后仍能推进、
-  可逆循环在默认配置下挂起（`awaiting_evidence`）、升级到上限才以 `cycle_detected` 失败、
-  verification unknown 不等于成功、reducer 纯性。
+- Tests must not call paid models. When a real wire shape needs checking, write an explicit script and
+  state its cost in the pull request.
+- New behavior needs matching tests. The expected coverage includes: a rejected frame binding, the four
+  receipt states, unresolved operations never being resent, an action with no effect still allowing
+  progress after the candidate set narrows, a reversible cycle suspending by default
+  (`awaiting_evidence`) and failing with `cycle_detected` only after escalations hit the limit,
+  verification `unknown` not counting as success, and reducer purity.
 
-## 设计约束（改动前先读 `AGENTS.md` 与 `docs/design.md`）
+## Design constraints (read `AGENTS.md` and `docs/design.md` first)
 
-- 内核（`src/jev_loop/core/`）不依赖 Jev、HTTP、浏览器或时钟之外的外部状态；模型相关代码只放
-  `src/jev_loop/policies/`，环境行为放适配器。
-- 状态的唯一真相是事件：变化必须经由 `core/events.py` + `core/reduce.py` 的纯 reducer，
-  禁止直接改 `RuntimeState`，禁止在 reducer 里做 I/O 或调用模型。
-- 不要为了"让循环更顺畅"移除守卫（`NO_PROGRESS` / `REPEAT` / `CYCLE`）；改守卫语义必须同时改
-  测试与 `README.md` 的守卫表。
-- `pending` / `unknown` 的操作只许查询不许重发；`idempotency=NONE` 永不盲目重试。
-- 不把真实 API key、cookie、登录态写进代码、测试、事件或 snapshot。
-- 改到 pi package 或 bundle 契约时，同步更新 `docs/pi-integration.md`。
+- The kernel (`src/jev_loop/core/`) must not depend on Jev, HTTP, a browser or any external state
+  beyond the clock. Model-facing code lives in `src/jev_loop/policies/`; environment behavior belongs
+  in adapters.
+- Events are the single source of truth: every state change goes through `core/events.py` and the pure
+  reducer in `core/reduce.py`. Do not mutate `RuntimeState` directly, and never do I/O or call a model
+  inside the reducer.
+- Do not remove the guards (`NO_PROGRESS` / `REPEAT` / `CYCLE`) to "make the loop smoother". Changing
+  guard semantics requires updating the tests and the guard table in `docs/design.md`.
+- Operations in `pending` / `unknown` may only be queried, never resent; `idempotency=NONE` is never
+  retried blindly.
+- Never put real API keys, cookies or login sessions into code, tests, events or snapshots.
+- When changing the pi package or the bundle contract, update `docs/pi-integration.md` as well.
+- Documentation is English-canonical: edit the English file, then keep its `*.zh-CN.*` counterpart
+  information-equal (and vice versa for wording fixes that change meaning).
 
-## 提交信息
+## Commit messages
 
-`type(scope): summary`，例如 `fix(host): preserve unconfirmed resource claims`。
-一次提交只做一件事；不要把无关格式化混进功能改动。
+`type(scope): summary`, for example `fix(host): preserve unconfirmed resource claims`. One commit does
+one thing; do not mix unrelated formatting into a functional change.
 
-## 许可证
+## License
 
-提交即表示你的贡献以本仓的 [MIT 许可证](LICENSE) 授权。
+By contributing, you agree that your contribution is licensed under this repository's
+[MIT License](LICENSE).

@@ -3,19 +3,33 @@
 [![CI](https://github.com/kevin-zhan/jev-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/kevin-zhan/jev-loop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **English summary** — `jev-loop` is an explicit-state decision runtime. Code owns the loop, the state,
-> the guards and the termination; a model (Jev, or any policy) only picks one candidate inside a single frame.
-> For a deterministic policy, a repeated (observation, candidate set) yields the same answer forever,
-> so the runtime, not the model, has to guarantee progress: every step must either change the frame or stop
-> (`NO_PROGRESS` / `REPEAT` / `CYCLE`). The repository also ships **pi-jev**, an installable
-> [pi](https://github.com/earendil-works/pi) package that runs project-local behavior *bundles* in their own worker
-> with leases, an append-only event journal, exclusive resource claims and asynchronous cognition.
-> Zero runtime dependencies, Python ≥ 3.12 on Linux/macOS/WSL (the host uses `fcntl`). Documentation is written in Chinese; start with
-> [docs/getting-started.html](docs/getting-started.html) for an external-engineer walkthrough.
+**English** | [简体中文](README.zh-CN.md)
 
-显式状态驱动的决策运行时。代码拥有循环、状态、守卫和终止；**Jev（或任何策略）只在一帧之内做选择**。
+**A Python runtime for AI-driven tasks that keep observing, acting, and checking results.**
 
-它回答的问题是：`state + questions → 结构化答案` 之外的那部分——谁执行、谁记状态、谁保证不空转——应该长什么样。
+`jev-loop` lets a model choose only the next allowed step while code owns execution, state and success
+verification; the model never has to remember what was tried or decide when to stop. An optional
+[pi](https://github.com/earendil-works/pi) integration (pi-jev) runs a suitable project bundle in its own
+worker, so the environment keeps moving while the main agent reasons.
+
+This repository is currently private and source-only: install it by cloning. It is not published to
+PyPI or npm.
+
+## The problem
+
+Repeated interactive tasks can run into failure modes that the model itself does not notice:
+
+- an action that already had no effect can be picked again, because nothing forces a different choice;
+- a tool returning can be mistaken for the action having worked, and the action working can be mistaken
+  for the task being done;
+- the loop can stall while the model "thinks", or burn its whole step budget instead of naming the cycle;
+- afterwards there may be no replayable record of what was tried, what actually changed, and why success
+  was believed.
+
+Putting the loop, the state, the stop conditions and the success verdict in code — and giving the model
+a narrow, well-formed choice — is what this project is about.
+
+## Approach
 
 ```text
 observe → offer → decide → validate → execute → reduce → guard
@@ -23,127 +37,187 @@ observe → offer → decide → validate → execute → reduce → guard
    └───────────────────────────────────────────────────────┘
 ```
 
-仓库同时提供 **pi-jev**：一个可安装的 pi package，把项目内行为 bundle 放进有租约、持久事件日志、独占资源
-声明和异步 cognition 的独立 worker 中。主 agent 可以慢思考，而 bundle 的 driver 继续运行。它不是 pi fork，
-也不包含任何特定网站/设备适配器。见 [`docs/pi-integration.md`](docs/pi-integration.md)。
+- **Code owns the loop.** A policy (Jev or anything else) receives one immutable frame and may answer
+  only with a candidate id from that frame. Observations, offered actions, pre-execution validation,
+  stop conditions and budgets are all code.
+- **Events are the state.** State is derived by a pure reducer over an append-only event log, so a run
+  can be replayed and explained rather than reconstructed from chat history.
+- **A result is not progress.** Every execution records a four-value receipt
+  (`completed / rejected / pending / unknown`); `pending` and `unknown` operations may only be queried,
+  never blindly resent, and `idempotency=NONE` is never retried.
+- **Verification is independent.** `request_finish` only asks for verification; only a verifier
+  returning `satisfied` counts as success, and `unknown` stays unknown.
+- **Guards keep the loop alive or stop it honestly.** No-effect writes, repeats on one observation and
+  revisited frames narrow the candidate set, then suspend, then end with a named reason. The full guard
+  table and the invariants behind it are in [docs/design.md](docs/design.md).
 
-## 为什么值得单独做一层
+## Use cases
 
-Jev 是**自我一致**的：同一个 frame 会得到同一个答案，而且没有采样随机性可以逃出重复。（见
-`docs/` 中记录的本机实测：同 state 复跑逐字一致。）这意味着
+Good fits:
 
-> 只要 (观测, 候选集) 再次出现，答案就必然再次出现：要么是固定点，要么是极限环。
-> 模型永远不会自己发现自己在打转。
+- **Long-running environment work with a slow reasoning model.** The bundle is responsible for keeping
+  the environment moving; the host gives it an independent worker and a channel for asking the main agent
+  bounded questions asynchronously, so the loop does not block on a single reply.
+- **Loops that must be stoppable and accountable.** Exclusive resource claims, leases, a two-phase
+  stop, and quarantine when a worker dies without confirming that it released its inputs.
+- **Runs that need an audit trail.** An append-only `events.jsonl`, bundle-owned artifacts, and a
+  verifier that is not the model.
 
-所以"能不能真的 loop 起来"不由模型决定，而由代码决定：**每步必须改变 frame，或者必须停下来。**
-本内核把这个约束做成了三条守卫：
+What this repository actually contains today:
 
-| 守卫 | 触发条件 | 处理 |
-|---|---|---|
-| `NO_PROGRESS` | 写操作 `completed`，但观测 revision 没变 | 把该动作标为该观测下"无效"，从候选集移除 |
-| `REPEAT` | 同一观测下同一动作已尝试过 | 拦截执行，加入 dead keys |
-| `CYCLE` | frame 内容（观测+候选+排除集）重现 | 无事可收窄 → 挂起等待新信息；持续升级 → `cycle_detected` 失败 |
+- `uv run jev-loop-demo` scenarios (`clean`, `noop`, `cycle`) — offline kernel semantics with a
+  deterministic mock environment. No network, no model calls.
+- [`examples/bundles/switchboard`](examples/bundles/switchboard) — a small bundle that runs the kernel
+  through pi-jev; a template for your own bundle, not a business adapter.
+- A built-in `diagnostic` bundle — proves bridge semantics (keep working while a cognition job is
+  pending, release inputs when stopped). It is never evidence that a user task was done.
 
-dead keys 的作用域是**当前观测**：观测一变，排除集清空——既保证确定性策略能逃出重复，
-又不会因为一次无效就永久失明。
+What this repository does not contain: browser, phone, game or site adapters, and no generic MCP server.
+If your environment needs one, you implement and verify a project bundle; see
+[docs/pi-integration.md](docs/pi-integration.md).
 
-## 内核约定
+### A real integration, in a separate project
 
-- **Frame 绑定**：`build_frame` 把候选重编号为 frame 内 `a1..an`；策略只能返回这些 id。
-  循环只在本帧的候选表里解析答案，并在执行前重新校验观测 revision。
-- **四态回执**：`completed / rejected / pending / unknown`。"工具返回了"≠"动作生效了"≠"任务完成了"。
-  `pending`/`unknown` 进入未决操作，之后只允许查询（`query`），不允许重发；`idempotency=NONE`
-  的动作永远不会被盲目重试。
-- **纯 reducer**：`apply(state, event)` 是纯函数，状态只能由事件推导；事件是唯一真相，可回放。
-- **验证独立**：策略的 `request_finish` 只是"请求验证"。只有 verifier 给出 `satisfied` 才算成功，
-  `unknown` 保持 unknown 并挂起。
-- **任务不可自改**：只有显式的 `TASK_UPDATED`（用户输入）能改目标文本。
-- **预算**：步数、墙钟、候选数量（默认 255）、frame 字符预算、等待次数、验证次数。
-- **不依赖 Jev SDK**：内核只依赖 `Policy` 协议；`policies/jev.py` 是唯一知道 TypeSafe 形状的地方。
+A read-only United business-upgrade (MUA) availability query has been built as a task-specific bundle
+in a separate private project (`united-pz-jev`), not in this repository. That bundle drives a dedicated,
+isolated browser profile the site has already accepted, is strictly read-only, and reports only what
+independent evidence confirms. Two boundaries from that work are worth repeating here: the upgrade
+availability a site shows is not the same as numeric PZ inventory, and when inventory cannot be read the
+answer must stay unknown rather than being written as zero.
 
-## 安装与验证
+## Quick start
+
+Prerequisites: Python 3.12+ on Linux, macOS or WSL (the host uses Unix `fcntl`);
+[uv](https://docs.astral.sh/uv/getting-started/installation/) is recommended and used below. The runtime
+has zero third-party dependencies.
 
 ```sh
-# 需要 Python 3.12+；运行时零第三方依赖
-# 平台：Linux / macOS / WSL（host 的资源声明用 Unix 的 fcntl）
-git clone https://github.com/kevin-zhan/jev-loop.git
+git clone https://github.com/kevin-zhan/jev-loop.git   # private repository: GitHub access required
 cd jev-loop
 uv sync
-
-uv run pytest          # 全部离线，不调用模型
-uv run ruff check .
-npm test              # pi RPC 真实加载扩展，不调用模型（需要 pi CLI 与 Node，已验证 pi 0.85.1 / Node ≥ 22）
 uv run jev-loop-demo --scenario clean
-uv run jev-loop-demo --scenario noop    # 无效果动作 → 收窄候选，继续推进
-uv run jev-loop-demo --scenario cycle   # 可逆循环 → 挂起等待新信息（suspended / awaiting_evidence），不烧步数预算
 ```
 
-不用 uv 也可以：`python3 -m venv .venv && ./.venv/bin/pip install -e .`。
+Expected output:
 
-### 在 pi 里用（pi-jev）
+```text
+status=succeeded stop_reason=None
+steps=3 executions=2 decisions=3 world={'a': True, 'b': True}
+verifications=['satisfied'] (only 'satisfied' counts as success)
+```
+
+The demo is fully offline: no API key, no network, no model calls — it is a semantics smoke test, not a
+paid-Jev or real-business validation. `--scenario noop` and `--scenario cycle` exercise the other two
+guard paths (no-effect narrowing and suspension instead of burning the step budget); both are explained
+in [docs/getting-started.html](docs/getting-started.html).
+
+Without uv (the runtime has no dependencies):
 
 ```sh
-pi install git:github.com/kevin-zhan/jev-loop@v0.2.0   # 钉版本，便于复现
-pi -e https://github.com/kevin-zhan/jev-loop           # 或临时试用，不写设置
+python3 -m venv .venv
+./.venv/bin/pip install -e .
+./.venv/bin/jev-loop-demo --scenario clean
 ```
 
-扩展默认调用 `python3`（用 `JEV_LOOP_PYTHON` 指定其他解释器），并把本包 `src/` 加进子进程
-`PYTHONPATH`，因此不需要单独安装 Python 包。装好后提供 `jev_loop` 工具、`/jev-runs`、`/jev-self-test`、
-`/jev-stop-all` 与 `pi-jev` skill。
+## Integration paths
 
-外部工程师的完整上手说明（三条使用路径、bundle 契约、安全语义、常见坑）见
-**[docs/getting-started.html](docs/getting-started.html)**。
-
-### 不依赖 pi 的宿主
-
-`jev-loop-host rpc` 从 stdin 读一个 JSON 请求、往 stdout 写一个 JSON 回应，动作包括
-`start / list / inspect / events / heartbeat / update / stop / respond / release_resources`，
-宿主 API 从 `jev_loop.host` 导出。
-
-## 接真实环境与真实 Jev
+### A. As a Python library
 
 ```python
 from jev_loop import Loop, TaskSpec
 from jev_loop.policies.jev import JevPolicy, http_request_fn
 
 loop = Loop(
-    task=TaskSpec(goal="开启深色模式", success_criteria=("设置页显示深色模式已开启",)),
-    environment=my_adapter,                    # 实现 observe / offer / execute / query / validate
+    task=TaskSpec(
+        goal="Turn on dark mode",
+        success_criteria=("the appearance page reports dark mode as enabled",),
+    ),
+    environment=my_adapter,                  # observe / offer / execute / query / validate
     policy=JevPolicy(request_fn=http_request_fn(api_key=key)),
-    verifier=my_verifier,                      # 独立证据，不接受模型的 DONE
+    verifier=my_verifier,                    # independent evidence; ignores the model's DONE
 )
 result = loop.run()
+print(result.status, result.stop_reason)
 ```
 
-`Adaptors`（浏览器、手机、工作区）只需要承诺三件事：能给什么观测、能执行哪些具体动作、
-未决操作怎么查询。内核不假设任何环境细节。
+This is an integration sketch, not a standalone runnable example: `my_adapter`, `my_verifier` and `key`
+are yours to provide — an `Environment` implementation, an independent `Verifier`, and a TypeSafe/Jev API
+key.
 
-## 目录
+The kernel depends on three protocols only — `Environment`, `Policy`, `Verifier` — and
+`policies/jev.py` is the only module that talks to the network (through an injectable `request_fn`, so
+tests stay offline). Kernel entry points and ports are exported from `jev_loop`; see
+[docs/getting-started.html](docs/getting-started.html) for a walked-through example.
 
-```text
-src/jev_loop/core/     state、events、reduce、frame、guards、loop
-src/jev_loop/policies/ scripted（离线/确定性）、jev（问题构建与答案解析）
-src/jev_loop/adapters/ mock（可注入故障的确定性环境）
-src/jev_loop/verifiers/predicate（确定性验证器）
-src/jev_loop/stores/   内存与 JSONL 事件存储
-src/jev_loop/host/     managed host、租约、认知 broker、bundle contract
-extensions/            pi 工具、后台事件投递与 session heartbeat
-skills/pi-jev/         agent 使用手册
-examples/bundles/      project bundle 示例
-docs/                  设计不变量、pi 集成与 bundle 契约、外部上手指南（HTML）
-spec/                  问题与 state 的线上规范（v0.1）及标准 fixture
-tests/                 全离线测试；tests/pi-extension/ 用 pi RPC 真实加载扩展
+### B. In pi, with project bundles
+
+The repository root is itself a pi package (`package.json` declares `extensions/pi-jev.ts` and
+`skills/pi-jev`). Install pi using its official installation instructions (see the
+[pi repository](https://github.com/earendil-works/pi)) and make sure Python 3.12+ is available:
+
+```sh
+git clone https://github.com/kevin-zhan/jev-loop.git   # access required
+cd jev-loop
+pi install .            # register this local package with pi (references the clone in place)
+# optional, unpinned remote install (private repository access required):
+# pi install git:github.com/kevin-zhan/jev-loop
 ```
 
-## 边界
+`/reload` an open session afterwards. The package provides the `jev_loop` tool
+(`start / list / inspect / events / update / respond / stop / release_resources`), `/jev-runs`,
+`/jev-self-test`, `/jev-stop-all` and the `pi-jev` skill. The extension calls `python3` by default
+(`JEV_LOOP_PYTHON` overrides it) and puts the package's `src/` on the worker's `PYTHONPATH`, so the
+Python package does not have to be installed globally.
 
-- 内核第一版只支持**单环境、单写执行**；没有多环境并行写、没有自动规划、没有子 loop。
-- managed host 可以同时管理不同资源的 run，但每个 `resourceKeys` 只允许一个活动 owner；它不会把一个内核变成多写。
-- `mock` 和内建 `diagnostic` 都是测试环境，不是产品适配器；真实适配器（浏览器/手机）不在本仓。
-- 候选覆盖问题（正确动作根本不在候选集里）由适配器和评测负责，内核只提供 `complete` 标记与
-  `blocked` 出口，不能替它发现。
+Bundle manifest, controller protocol, runtime cognition, lifecycle and safety semantics:
+[docs/pi-integration.md](docs/pi-integration.md).
 
-## 贡献与许可
+### C. With your own host
 
-- 贡献流程、开发约束与验证命令见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-- 本项目以 [MIT 许可证](LICENSE) 发布；Issue 与 PR 都在 GitHub 上处理。
+No pi required. With the environment synced, `uv run jev-loop-host rpc` reads one JSON request from
+stdin and writes one JSON response to stdout
+(`start / list / inspect / events / heartbeat / update / stop / respond / release_resources`);
+the host API is exported from `jev_loop.host`. A worked example of the JSON is in
+[docs/getting-started.html](docs/getting-started.html).
+
+## Limits and safety
+
+- **Single environment, single writer.** The first kernel version has no multi-environment parallel
+  writes, no automatic planning and no sub-loops. Each resource key has at most one active owner;
+  overlapping claims conflict.
+- **Adapters are yours.** The mock environment in this repository is a test double. A real adapter must
+  prove its observations contain every field its preconditions and verifier rely on.
+- **Bundle manifests are code.** A manifest loads project code with your privileges; only run reviewed
+  manifests inside a trusted project root. Runtime cognition context is untrusted data, not user
+  authorization.
+- **Stopping is two-phase.** An accepted stop request is not proof that inputs were released; require a
+  terminal status plus `resources_released=true`, and keep an out-of-process watchdog for real devices.
+- **Liveness is not success.** A live process or a green diagnostic says nothing about the task; only
+  the bundle's verifier evidence and a terminal run status do.
+- **The core is synchronous; the worker is not.** `Loop.step()` executes one action at a time. pi-jev's
+  managed host keeps the environment moving in a worker while a cognition job is pending — it does not
+  turn the synchronous kernel into an async one.
+- **Source-only distribution.** Not published to PyPI or npm; no version tags beyond the version fields
+  in `pyproject.toml` and `package.json`.
+
+## Documentation
+
+| Document | English | 简体中文 |
+|---|---|---|
+| External-engineer walkthrough (three paths, bundle contract, safety, pitfalls) | [getting-started.html](docs/getting-started.html) | [getting-started.zh-CN.html](docs/getting-started.zh-CN.html) |
+| pi integration and bundle contract | [pi-integration.md](docs/pi-integration.md) | [pi-integration.zh-CN.md](docs/pi-integration.zh-CN.md) |
+| Kernel invariants and guard table | [design.md](docs/design.md) | [design.zh-CN.md](docs/design.zh-CN.md) |
+| Question wire format (v0.1), design/spec document | [questions.md](spec/questions.md) | [questions.zh-CN.md](spec/questions.zh-CN.md) |
+| State wire format (v0.1), design/spec document | [state.md](spec/state.md) | [state.zh-CN.md](spec/state.zh-CN.md) |
+| Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) | [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) |
+
+The v0.1 documents describe the wire-format design; the current kernel implements a subset of them
+(the mapping is at the end of the state specification). The English documents are canonical; the Chinese
+files are kept information-equal. Code comments and runtime strings are English.
+
+## Contributing and license
+
+Contributions are welcome; the development environment, required checks and design constraints are in
+[CONTRIBUTING.md](CONTRIBUTING.md). Tests never call paid APIs.
+
+This project is released under the [MIT License](LICENSE).

@@ -1,61 +1,88 @@
-# 设计：核不变量
+# Design: kernel invariants
 
-内核只保证三件事：**只有通过校验的选择才会执行**、**状态只由真实事件推导**、**只有证据满足才宣布完成**。
-为了让"循环"真的有活性（而不是停下），还需要一组更强的不变量。
+**English** | [简体中文](design.zh-CN.md)
 
-## 为什么需要守卫
+The kernel guarantees exactly three things: **only a validated choice is executed**, **state is derived
+from real events only**, and **completion is declared only when the evidence satisfies it**. Making the
+loop actually live (rather than merely stop) requires a stronger set of invariants.
 
-Jev 是自我一致的：同一个 frame 会得到同一个答案，且没有采样随机性。于是
+## Why guards are needed
 
-> 只要 (观测, 候选集) 再次出现，答案必然再次出现。
+For a deterministic policy — the same observation and candidate set always produce the same answer,
+with no sampling randomness to escape through — the following holds:
 
-固定点（什么都没变）和极限环（变了又变回来）在模型侧都无法自愈。因此循环的推进力只能来自代码：
-每一步要么改变 frame，要么停下来。内核实现的逃生方式有三种：
+> As soon as an (observation, candidate set) pair occurs again, the same answer necessarily occurs
+> again: either a fixed point or a limit cycle. The model will never notice on its own that it is
+> spinning.
 
-1. **收窄候选集**：把无效果/已尝试的动作从候选集移除（`dead_actions`）。frame 因此改变，
-   确定性策略被迫做出不同选择。
-2. **挂起**：无事可收窄时（frame 重现但没有可排除的动作），带唤醒条件挂起，而不是重问模型。
-3. **命名失败**：反复升级（`max_guard_escalations`）后以 `cycle_detected` / `no_progress` 结束。
+So the driving force of the loop can only come from code: **every step either changes the frame or
+stops**. The kernel implements three escapes:
 
-## 不变量清单
+1. **Narrow the candidate set**: remove actions that had no effect or were already attempted
+   (`dead_actions`). The frame changes, which forces the deterministic policy to choose differently.
+2. **Suspend**: when there is nothing left to narrow (the frame reappeared but no action can be
+   excluded), suspend with a wake condition instead of asking the model again.
+3. **Name the failure**: after repeated escalations (`max_guard_escalations`), end with
+   `cycle_detected` / `no_progress`.
 
-| 编号 | 不变量 | 违反时的表现 | 由谁保证 |
-|---|---|---|---|
-| I1 | 每一步都从新观测开始；读失败保留旧 revision 并标记 stale | 在旧世界上做决定 | `OBSERVED` + `observation_stale` |
-| I2 | 执行前重新校验：frame 归属、观测 revision、候选是否已被排除、授权 | 执行越权或不存在的动作 | `_validate_candidate` / `default_validate` |
-| I3 | 有副作用的动作先写意图再执行；回执四态入事件流 | 崩溃后无法判断是否发生过 | `EXECUTION_INTENT` → `EXECUTION_RECEIPT` |
-| I4 | pending/unknown 只许查询，不许重发；`idempotency=NONE` 永不盲目重试 | 重复副作用 | `unresolved` + `build_frame` 过滤 |
-| I5 | `dead_actions` 的作用域是当前观测；观测一变即清空 | 一次无效导致永久失明 | `reduce.apply` 的 `OBSERVED` 分支 |
-| I6 | frame 指纹只覆盖能带来推进的内容（观测、候选、排除集、目标），不含历史 | 因历史增长而永远检测不到环 | `frame.build_frame` |
-| I7 | reducer 是纯函数；状态只能由事件推导 | 状态不可回放/不可解释 | `reduce.apply` |
-| I8 | 只有 verifier 的 `satisfied` 才算成功；`unknown` 保持 unknown | 把模型的 DONE 当完成 | `_verify` |
-| I9 | 目标文本只由显式 `TASK_UPDATED` 改变 | 网页/工具输出改写任务 | `reduce.apply` |
-| I10 | 步数、墙钟、候选数、frame 体积、验证次数都有硬上限 | 失控成本 | `LoopConfig` |
-
-## 四态回执的语义
-
-| 回执 | 含义 | 运行时行为 |
+| Guard | Trigger | Handling |
 |---|---|---|
-| `completed` | 结果明确（可能成功也可能失败） | 记录；做效果检测（revision 是否变化） |
-| `rejected` | 明确没有开始执行 | 记录；条件修复后可再考虑 |
-| `pending` | 已受理，结果未定 | 进入未决；下一步只查询 |
-| `unknown` | 无法确定是否发生 | 进入未决；只查询，**不重试** |
+| `NO_PROGRESS` | a write action `completed`, but the observation revision did not change | mark the action as having no effect under that observation and remove it from the candidate set |
+| `REPEAT` | the same action under the same observation was already attempted | block execution and add it to the dead keys |
+| `CYCLE` | the frame content (observation + candidates + exclusion set) reappears | nothing left to narrow → suspend and wait for new information; keep escalating → fail with `cycle_detected` |
 
-"工具调用返回了" ≠ "动作达到效果" ≠ "任务完成"。内核把这三件事分别记录、分别判断。
+Dead keys are scoped to the **current observation**: once the observation changes, the exclusion set is
+cleared. That lets a deterministic policy escape a repeat without permanently blinding it after one
+no-effect action.
 
-## 已知边界
+## Invariants
 
-- 单环境、单写执行。多环境并行写、子 loop、自动规划都不在第一版。
-- 候选覆盖（正确动作根本不在候选集里）无法由内核发现，只能靠适配器 + 评测；内核提供 `complete`
-  标记与 `blocked` 出口，并在 `blocked` 时把"候选集声称完整/不完整"记入事件。
-- 观测延迟（动作效果晚于观测）会被判成一次 no-effect；这是有意的保守策略：宁可标死一次，
-  也不重复提交。效果随后出现时观测 revision 改变，该动作自动回到候选集。
-- 循环本身不产生正确性：每个候选仍可能被语义上选错，最终结论仍要靠 verifier 独立核对。
+| # | Invariant | Symptom when violated | Enforced by |
+|---|---|---|---|
+| I1 | Every step starts from a fresh observation; a failed read keeps the old revision and marks it stale | deciding on a stale world | `OBSERVED` + `observation_stale` |
+| I2 | Re-validation before execution: frame membership, observation revision, not-yet-excluded, authorization | executing an unauthorized or nonexistent action | `_validate_candidate` / `default_validate` |
+| I3 | Actions with side effects write intent before executing; receipts enter the event stream in four states | after a crash, it is impossible to tell whether it happened | `EXECUTION_INTENT` → `EXECUTION_RECEIPT` |
+| I4 | Pending/unknown may only be queried, never resent; `idempotency=NONE` is never retried blindly | duplicated side effects | `unresolved` + `build_frame` filtering |
+| I5 | `dead_actions` are scoped to the current observation and cleared when it changes | one no-effect action blinds the loop forever | the `OBSERVED` branch of `reduce.apply` |
+| I6 | The frame fingerprint covers only what can make progress (observation, candidates, exclusion set, goal), not history | cycles are never detected because history keeps growing | `frame.build_frame` |
+| I7 | The reducer is pure; state is derived from events only | state cannot be replayed or explained | `reduce.apply` |
+| I8 | Only a verifier's `satisfied` counts as success; `unknown` stays unknown | the model's DONE is treated as completion | `_verify` |
+| I9 | The goal text changes only through an explicit `TASK_UPDATED` | page or tool output rewrites the task | `reduce.apply` |
+| I10 | Steps, wall clock, candidate count, frame size and verification count all have hard limits | runaway cost | `LoopConfig` |
 
-## 相关文档
+## Receipt semantics
 
-- [`spec/questions.md`](../spec/questions.md)、[`spec/state.md`](../spec/state.md)：发给模型的 question 与
-  state 的线上规范（v0.1），含每条规则的来源与尺寸上限；[`spec/fixture-dark-mode.json`](../spec/fixture-dark-mode.json)
-  是同一份规范的标准 fixture。内核当前实现是该规范的一个子集，映射表在 `state.md` 末尾。
-- [`pi-integration.md`](pi-integration.md)：managed host / bundle 契约 / cognition 与生命周期语义。
-- [`getting-started.html`](getting-started.html)：外部工程师上手说明。
+| Receipt | Meaning | Runtime behavior |
+|---|---|---|
+| `completed` | The result is definite (it may still be a failure) | Record it; check for effect (did the revision change?) |
+| `rejected` | Definitely did not start | Record it; it may be considered again once conditions are fixed |
+| `pending` | Accepted, outcome undecided | Becomes unresolved; the next step may only query |
+| `unknown` | Cannot determine whether it happened | Becomes unresolved; query only, **never retry** |
+
+"A tool call returned" ≠ "the action took effect" ≠ "the task is done". The kernel records and judges
+these three separately.
+
+## Known boundaries
+
+- Single environment, single-writer execution. Multi-environment parallel writes, sub-loops and
+  automatic planning are not in the first version.
+- Candidate coverage (the right action simply not being in the candidate set) cannot be detected by the
+  kernel; it depends on the adapter and on evaluation. The kernel offers a `complete` flag and a
+  `blocked` exit, and records whether the candidate set claimed completeness when blocked.
+- Observation delay (an effect arriving after the observation) is counted as one no-effect step. That is
+  deliberately conservative: better to mark an action once than to submit it twice. When the effect
+  finally appears, the observation revision changes and the action returns to the candidate set
+  automatically.
+- The loop itself does not produce correctness: any candidate can still be chosen wrongly for semantic
+  reasons, and the final verdict still depends on an independent verifier.
+
+## Related documents
+
+- [`spec/questions.md`](../spec/questions.md) and [`spec/state.md`](../spec/state.md): the wire
+  specifications (v0.1) for the question sent to the model and the state it sees, including the source
+  of each rule and size limits; [`spec/fixture-dark-mode.json`](../spec/fixture-dark-mode.json) is the
+  standard fixture for the same specification. The current implementation is a subset of that
+  specification; the mapping table is at the end of `state.md`.
+- [`pi-integration.md`](pi-integration.md): managed host, bundle contract, cognition and lifecycle
+  semantics.
+- [`getting-started.html`](getting-started.html): walkthrough for external engineers.
