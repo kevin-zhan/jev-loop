@@ -47,6 +47,33 @@ pi -e https://github.com/kevin-zhan/jev-loop   # 临时试用，不写设置
 - `/jev-stop-all`：交互确认后停止当前 session 的所有活动 run；
 - `pi-jev` skill：教 agent 何时使用、怎样处理 cognition 和怎样验收。
 
+## 真实 Jev run 的凭据
+
+pi-jev 不会替 Jev 决策读取 pi 的凭据。扩展会把 pi 进程的环境传给 worker，因此读取
+`TYPESAFE_API_KEY` 的 bundle（受支持入口是 `jev_loop.policies.jev` 的 `default_request_fn()`）
+只有在 pi 从已加载该变量的进程启动时才能看到它：
+
+```sh
+uv run pi                     # 变量已在当前 shell 环境中
+uv run --env-file .env pi     # 或显式加载私有文件
+```
+
+`/reload` 不会重新导入 key；请启动新的 pi 进程。变量已在环境里时不需要该 flag。
+
+每个 bundle 都适用的规则：
+
+- key 只放进程环境，或放在 bundle 内部显式的 `request_fn` 注入里。绝不能进 `task`、
+  `inputsJson`、`bundleConfigJson`、事件、snapshot 或 cognition 消息：host 会持久化这些内容并回读给
+  agent，worker.log 同样不能出现它们。
+- key 缺失、空白或含无法放进 header 的字符时，会在第一个网络或环境动作之前失败。不会静默降级成
+  mock，provider 的响应 body 也不会被写进错误或日志。
+- 启动 run 之前用离线预检查看本地配置：`uv run jev-loop-doctor`（key 保存在私有文件时加前缀
+  `--env-file .env`；加 `--bundle <manifest>` 可一并检查该 run 将加载的 manifest）。它的报告只是本地
+  结论：`authentication`、`connectivity`、`model_availability` 保持 `not_checked`，因为它不发起请求。
+- [`examples/live-files`](../examples/live-files) 是可直接运行的参考 bundle。它的工作区始终是
+  `run_dir/artifacts/workspace`，两次 run 不会共享目录；verifier 会写
+  `run_dir/artifacts/verification.json`，并把判定镜像进 `inspect` 返回的 `controller.verification`。
+
 ## Bundle manifest
 
 扩展只接受内建 `diagnostic` 或当前可信项目目录内的 manifest。manifest 会执行 Python 代码，因此它是
@@ -180,6 +207,7 @@ bundle 自己仍须避免把 cookie、token 或原始隐私资料写入事件和
 uv sync
 uv run pytest
 uv run ruff check .
+uv run jev-loop-doctor --offline   # 本地配置预检，不发起网络请求
 npm test
 node --experimental-strip-types --check extensions/pi-jev.ts
 ```

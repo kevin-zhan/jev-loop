@@ -52,6 +52,39 @@ Once installed, the package provides:
 - the `pi-jev` skill: teaches the agent when to use the extension, how to handle cognition and how to
   verify a run.
 
+## Credentials for real Jev runs
+
+pi-jev does not read pi's credentials for Jev decisions. The extension passes the environment of
+the pi process to the worker, so a bundle that reads `TYPESAFE_API_KEY` — the supported entry point
+is `default_request_fn()` in `jev_loop.policies.jev` — sees it when pi was started from a process
+that already has it:
+
+```sh
+uv run pi                     # the variable is already exported in this shell
+uv run --env-file .env pi     # or load a private file explicitly
+```
+
+`/reload` does not re-import the key; start a new pi process. When the variable is already in the
+environment, the flag is unnecessary.
+
+Rules that apply to every bundle:
+
+- The key belongs in the process environment, or in an explicit `request_fn` injection inside the
+  bundle. Never in `task`, `inputsJson`, `bundleConfigJson`, events, snapshots or cognition
+  messages: the host persists those and returns them to agents, and the worker log must not contain
+  them either.
+- A missing, blank or header-unsafe key fails before the first network or environment action.
+  Nothing falls back to a mock, and no provider response body is copied into an error or a log.
+- Check the local configuration before starting a run with the offline preflight:
+  `uv run jev-loop-doctor` (prefix it with `--env-file .env` when the key lives in a private file;
+  add `--bundle <manifest>` to check the manifest the run will load). Its report is a local
+  statement: `authentication`, `connectivity` and `model_availability` stay `not_checked` because it
+  makes no request.
+- [`examples/live-files`](../examples/live-files) is the runnable reference bundle. Its workspace is
+  always `run_dir/artifacts/workspace`, so two runs never share a directory, and the verifier
+  writes `run_dir/artifacts/verification.json` and mirrors the verdict into the
+  `controller.verification` snapshot that `inspect` returns.
+
 ## Bundle manifest
 
 The extension accepts only the built-in `diagnostic` bundle or a manifest inside the current trusted
@@ -202,6 +235,7 @@ tokens or raw private data into events and snapshots.
 uv sync
 uv run pytest
 uv run ruff check .
+uv run jev-loop-doctor --offline   # local configuration preflight; no network request
 npm test
 node --experimental-strip-types --check extensions/pi-jev.ts
 ```

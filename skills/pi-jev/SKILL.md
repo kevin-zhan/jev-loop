@@ -48,10 +48,14 @@ The bundle carries its own preconditions; this skill does not add them:
   project's `scripts/warm-profile.sh` (isolated from the daily browser), perform a normal United query
   by hand in the window, and let the bundle attach at `http://127.0.0.1:9222`. The query reads public
   pages only; it does not need to sign in and must not sign in.
-- The query uses a `TYPESAFE_API_KEY` for Jev decisions. Where the key is configured is decided by that
-  bundle's local manifest/config; if it is not configured, the runner exits with
-  `TYPESAFE_API_KEY is not configured; no live Jev verification performed` — do not treat that as a
-  query result.
+- The query uses a `TYPESAFE_API_KEY` for Jev decisions. In this repository the supported entry
+  point is the process environment variable read by `default_request_fn()`
+  (`jev_loop.policies.jev`); a bundle may also inject its own `request_fn`. Where that bundle takes
+  the key from is its own local manifest/config. Check the local configuration offline with
+  `uv run jev-loop-doctor` before starting a run, and never paste a key into a task,
+  `inputsJson`, a bundle config or a cognition message.
+- If the key is missing, blank or unusable, the run fails before its first action — do not treat
+  that as a query result, and do not work around it with a mock.
 - The date, airports and adult count above are example shapes and **do not grant new authorization**;
   every real query needs the user's explicit approval for that query.
 - The MUA availability a site shows is not the same as numeric PZ inventory; when numeric PZ cannot be

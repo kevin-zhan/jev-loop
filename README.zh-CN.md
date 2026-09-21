@@ -76,6 +76,9 @@ task state → Jev decision → action → observed state update → next decisi
 
 - `uv run jev-loop-demo` 三个场景（`clean`、`noop`、`cycle`）——用确定性 mock 环境演示内核语义，
   不联网、不调用模型。
+- `uv run jev-loop-doctor`——本地 Jev 配置的离线预检：不发起网络请求，也不打印凭据值。
+- [`examples/live-files`](examples/live-files)——可直接运行的真实参考用例：真实 Jev 决策请求、带
+  合成内容的本机文件系统环境，以及独立 verifier。
 - [`examples/bundles/switchboard`](examples/bundles/switchboard)——一个很小的 bundle，通过 pi-jev 跑
   内核；是你自己 bundle 的模板，不是业务适配器。
 - 内建 `diagnostic` bundle——只证明桥接语义（cognition pending 时继续推进、停止时释放输入），
@@ -115,6 +118,8 @@ verifications=['satisfied'] (only 'satisfied' counts as success)
 验收。`--scenario noop` 与 `--scenario cycle` 覆盖另外两条守卫路径（无效果收窄候选、挂起而不是烧完
 步数预算），两者都在 [docs/getting-started.zh-CN.html](docs/getting-started.zh-CN.html) 里解释。
 
+准备接真实 Jev？见[接入真实 Jev 服务](#接入真实-jev-服务)，内含预检与可运行参考用例。
+
 不用 uv（运行时本来就没有依赖）：
 
 ```sh
@@ -129,7 +134,7 @@ python3 -m venv .venv
 
 ```python
 from jev_loop import Loop, TaskSpec
-from jev_loop.policies.jev import JevPolicy, http_request_fn
+from jev_loop.policies.jev import JevPolicy, default_request_fn
 
 loop = Loop(
     task=TaskSpec(
@@ -137,15 +142,17 @@ loop = Loop(
         success_criteria=("设置页显示深色模式已开启",),
     ),
     environment=my_adapter,                  # observe / offer / execute / query / validate
-    policy=JevPolicy(request_fn=http_request_fn(api_key=key)),
+    policy=JevPolicy(request_fn=default_request_fn()),   # 从进程环境读 TYPESAFE_API_KEY
     verifier=my_verifier,                    # 独立证据；不接受模型的 DONE
 )
 result = loop.run()
 print(result.status, result.stop_reason)
 ```
 
-这段代码是集成示意，不是可直接运行的示例：`my_adapter`、`my_verifier` 与 `key` 都需要你自己提供——
-一个 `Environment` 实现、一个独立的 `Verifier`，以及 TypeSafe / Jev API key。
+这段代码是集成示意，不是可直接运行的示例：`my_adapter` 与 `my_verifier` 需要你自己提供——一个
+`Environment` 实现和一个独立的 `Verifier`。`default_request_fn()` 从进程环境读取凭据；缺失或不可用
+时会在第一个动作之前给出具名错误。已经持有密钥的嵌入代码仍可用 `http_request_fn(api_key=...)` 显式
+注入。完整可运行用例见下文[接入真实 Jev 服务](#接入真实-jev-服务)。
 
 内核只依赖三个协议——`Environment`、`Policy`、`Verifier`；`policies/jev.py` 是唯一碰网络的模块
 （经由可注入的 `request_fn`，所以测试保持离线）。内核入口与 ports 从 `jev_loop` 导出；
@@ -178,6 +185,116 @@ bundle manifest、controller 契约、运行中 cognition、生命周期与安�
 回应（`start / list / inspect / events / heartbeat / update / stop / respond / release_resources`）；
 宿主 API 从 `jev_loop.host` 导出。JSON 是长什么样的完整示例见
 [docs/getting-started.zh-CN.html](docs/getting-started.zh-CN.html)。
+
+## 接入真实 Jev 服务
+
+快速开始 demo 与默认测试套件均离线，不调用付费 API。真实 run 需要由**你自己提供** TypeSafe / Jev API
+key；本仓提供的是受支持的配置入口、离线预检与可运行的 reference bundle。上文路径 A 的代码是你自己
+搭建集成的示意，它发出的真实请求属于你的付费调用。
+
+### 凭据
+
+- 受支持的入口是环境变量 `TYPESAFE_API_KEY`，由 `jev_loop.policies.jev` 里的
+  `default_request_fn()` 读取。已经持有密钥的代码仍可用 `http_request_fn(api_key=...)` 或
+  `JevPolicy(request_fn=...)` 显式注入；`default_request_fn(env_name=...)` 可换用其他变量名。
+- 库**只读进程环境**：不解析 `.env`、不查 keychain、不读其他项目的配置。key 缺失、空白或含无法
+  放进 HTTP header 的字符时，会在第一个网络或环境动作之前抛出具名错误，绝不静默降级到 mock。
+- 不要把 key 写进命令行 flag、run spec/task、`bundle_config`、事件、snapshot 或 cognition 消息：
+  这些都会被持久化并回读给 agent。
+- 把 key 放进进程环境，然后直接运行命令。两种受支持方式：
+  - 在 shell 里 `export TYPESAFE_API_KEY=...`，再跑 `uv run jev-loop-doctor`；
+  - 或保存在私有文件里，让 uv 显式加载该文件。只有在还没有私有文件时才复制空模板——绝不覆盖已有文件：
+
+```sh
+# 仅当你还没有把该 key 保存在本地文件时：
+cp .env.example .env && chmod 600 .env
+# 若 .env 已存在，请保留它并直接编辑该文件，不要复制覆盖
+uv run --env-file .env jev-loop-doctor
+```
+
+  `--env-file` 接的是真实文件路径，由 uv 在命令运行前加载进进程环境；库自身不读、不解析该文件，
+  也不会打印其值。
+
+### 离线预检
+
+```sh
+uv run jev-loop-doctor            # 人类可读报告
+uv run jev-loop-doctor --json     # 面向脚本/agent 的同一份报告
+uv run jev-loop-doctor --offline  # 只查安装与运行时；不需要 key
+```
+
+doctor 校验 Python ≥3.12、host 依赖的 Unix `fcntl`、endpoint/model/timeout 取值与凭据是否存在。
+它的 JSON 标注 `mode: "preflight"`，并把 `authentication`、`connectivity`、`model_availability`
+保持为 `not_checked`：绿灯只是本地配置结论，不是真实 API 验收。退出码：`0` 本地配置通过，
+`2` 凭据缺失/空白/不可用，`3` 非秘密配置无效或平台不支持，`1` 未知错误。可用
+`--bundle examples/live-files/bundle.json` 顺带检查 run 将要加载的 manifest。
+
+### 可直接运行的真实参考用例
+
+[`examples/live-files`](examples/live-files) 自包含、可跨机器运行，不需要私有仓或浏览器 profile：
+真实 Jev 决策、带固定**合成**内容的本机文件系统环境，以及独立 verifier。
+
+```sh
+# 变量已在当前进程环境中：
+uv run python examples/live-files/run.py --max-steps 8 \
+    --workspace "$(mktemp -d)/workspace"
+
+# 或显式加载私有文件（真实路径；库自身不会读取该值）：
+uv run --env-file .env python examples/live-files/run.py --max-steps 8 \
+    --workspace "$(mktemp -d)/workspace"
+```
+
+发生的事情按顺序是：
+
+1. 先校验配置与凭据；通过之后才创建工作区。
+2. 工作区必须是新建或空目录——非空目录或 symlink 会被拒绝；本示例绝不覆盖、移动或删除不是它自己
+   创建的内容。
+3. 每个循环步骤就是一次真实的 Jev 决策请求，候选集来自该 frame；`--max-steps`（默认 8）限制
+   请求次数。
+4. 环境执行真实的文件操作（写入 `inbox/alpha.txt` 内容、把 `inbox/gamma.log` 归档到
+   `archive/gamma.log`），循环在每一步之后重新读取目录。
+5. `LiveFilesVerifier` 自己重读文件系统并作出判定；模型的回答无法让它通过。证据写入工作区里的
+   `verification.json`，run 会打印该路径。
+6. 不会自动删除任何东西：请先复核工作区，再自行删除。
+
+它的退出码：成功 `0`；凭据缺失或被服务拒绝 `2`；循环本身失败或验证未满足 `1`；配置、工作区或命令行用法错误 `3`。
+它是参考示例，不是生产适配器，也不是 benchmark。`examples/` 不会打进构建出的 wheel：请从源码克隆
+运行（如上）；`jev-loop-doctor` 随包安装，在克隆目录之外也能用。同一个 adapter 与 verifier 也可作为
+managed bundle 运行：
+
+```sh
+uv run jev-loop-host rpc <<'JSON'
+{"action":"start","owner_id":"engineer","idempotency_key":"live-files-1",
+ "project_root":"/path/to/jev-loop","bundle":"examples/live-files/bundle.json",
+ "task":{"goal":"prepare the synthetic inbox"},"max_runtime_seconds":120}
+JSON
+```
+
+key 来自显式文件时，给同一条命令加上前缀 `uv run --env-file .env` 即可。
+
+之后用 `inspect` / `events` 读取状态与证据，需要时用 `stop` 停止。只有 terminal status、
+`resources_released=true` 且 `controller.verification.verdict=satisfied` 才算完成。该 bundle 始终在
+`run_dir/artifacts/workspace` 工作，两次 run 不可能共享目录；它的 `bundle_config` 只接受 `model`、
+`api_url`、`timeout` 与 `max_steps`（1..64，默认 8）。`inspect` 会报告生效的 `max_steps` 与
+实际发生的 `decision_requests`。
+
+### pi、OpenRouter 与其他 provider
+
+pi-jev 不会替 Jev 读取 pi 的凭据。worker 继承 pi 进程的环境，因此请从已加载该变量的进程启动 pi——
+在 shell 里 export，或用 uv 显式加载一个文件：
+
+```sh
+uv run pi                     # 变量已在当前 shell 环境中
+uv run --env-file .env pi     # 或显式加载私有文件
+```
+
+`/reload` 不会重新导入 key；请启动新的 pi 进程。
+
+慢思考始终是 pi 自己的事，在 pi 里配置。如果你的 pi 会话使用其他 provider（例如 OpenRouter），请在
+pi 侧配置：pi 支持 `/login openrouter` 与 `OPENROUTER_API_KEY` 变量（见
+[pi 仓库](https://github.com/earendil-works/pi) 的 `docs/providers.md`、`docs/models.md`）。
+`TYPESAFE_API_KEY` 只用于经 `policies/jev.py` 发出的 Jev 决策请求；jev-loop 不自带其他 provider
+客户端。
 
 ## 可靠性从哪来
 

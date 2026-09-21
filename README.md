@@ -91,6 +91,10 @@ What this repository actually contains today:
 
 - `uv run jev-loop-demo` scenarios (`clean`, `noop`, `cycle`) — offline kernel semantics with a
   deterministic mock environment. No network, no model calls.
+- `uv run jev-loop-doctor` — an offline preflight of the local Jev configuration: no network
+  request, no credential value printed.
+- [`examples/live-files`](examples/live-files) — a runnable live reference: real Jev decision
+  requests, a real filesystem environment with synthetic content, and an independent verifier.
 - [`examples/bundles/switchboard`](examples/bundles/switchboard) — a small bundle that runs the kernel
   through pi-jev; a template for your own bundle, not a business adapter.
 - A built-in `diagnostic` bundle — proves bridge semantics (keep working while a cognition job is
@@ -135,6 +139,9 @@ paid-Jev or real-business validation. `--scenario noop` and `--scenario cycle` e
 guard paths (no-effect narrowing and suspension instead of burning the step budget); both are explained
 in [docs/getting-started.html](docs/getting-started.html).
 
+Ready for real Jev decisions? [Connecting a real Jev service](#connecting-a-real-jev-service) has the
+preflight and the runnable reference example.
+
 Without uv (the runtime has no dependencies):
 
 ```sh
@@ -149,7 +156,7 @@ python3 -m venv .venv
 
 ```python
 from jev_loop import Loop, TaskSpec
-from jev_loop.policies.jev import JevPolicy, http_request_fn
+from jev_loop.policies.jev import JevPolicy, default_request_fn
 
 loop = Loop(
     task=TaskSpec(
@@ -157,16 +164,19 @@ loop = Loop(
         success_criteria=("the appearance page reports dark mode as enabled",),
     ),
     environment=my_adapter,                  # observe / offer / execute / query / validate
-    policy=JevPolicy(request_fn=http_request_fn(api_key=key)),
+    policy=JevPolicy(request_fn=default_request_fn()),   # TYPESAFE_API_KEY from the process env
     verifier=my_verifier,                    # independent evidence; ignores the model's DONE
 )
 result = loop.run()
 print(result.status, result.stop_reason)
 ```
 
-This is an integration sketch, not a standalone runnable example: `my_adapter`, `my_verifier` and `key`
-are yours to provide — an `Environment` implementation, an independent `Verifier`, and a TypeSafe/Jev API
-key.
+This is an integration sketch, not a standalone runnable example: `my_adapter` and `my_verifier`
+are yours to provide — an `Environment` implementation and an independent `Verifier`.
+`default_request_fn()` reads the credential from the process environment and fails with a named
+error before the first action if it is missing or unusable; code that already holds a secret can
+keep injecting it explicitly with `http_request_fn(api_key=...)`. For a complete runnable case see
+[Connecting a real Jev service](#connecting-a-real-jev-service) below.
 
 The kernel depends on three protocols only — `Environment`, `Policy`, `Verifier` — and
 `policies/jev.py` is the only module that talks to the network (through an injectable `request_fn`, so
@@ -203,6 +213,128 @@ stdin and writes one JSON response to stdout
 (`start / list / inspect / events / heartbeat / update / stop / respond / release_resources`);
 the host API is exported from `jev_loop.host`. A worked example of the JSON is in
 [docs/getting-started.html](docs/getting-started.html).
+
+## Connecting a real Jev service
+
+The quick-start demo and the default test suite are offline and never call a paid API. A live run
+needs a TypeSafe/Jev API key that **you provide**; this repository provides the supported
+configuration entry point, the offline preflight and a runnable reference bundle. The Path A
+sketch above is an integration you build yourself, so any live request it makes is your own paid
+call.
+
+### Credential
+
+- The supported entry point is the environment variable `TYPESAFE_API_KEY`, read by
+  `default_request_fn()` in `jev_loop.policies.jev`. Code that already holds a secret can keep
+  injecting it explicitly with `http_request_fn(api_key=...)` or `JevPolicy(request_fn=...)`;
+  `default_request_fn(env_name=...)` accepts a different variable name.
+- The library reads the **process environment only**: no `.env` parsing, no keychain, no other
+  project's configuration. A missing, blank or header-unsafe key raises a named error before the
+  first network or environment action, and there is no silent fallback to a mock.
+- Never put the key in a command-line flag, a run spec/task, `bundle_config`, an event, a snapshot
+  or a cognition message: those are persisted and read back by agents.
+- Get the key into the process environment, then run commands directly. Two supported ways:
+  - export it in the shell (`export TYPESAFE_API_KEY=...`) and run `uv run jev-loop-doctor`;
+  - or keep it in a private file and let uv load that file explicitly. Copy the empty template only when
+    you do not already have a private file — never overwrite an existing one:
+
+```sh
+# only if you do not already keep this key in a local file:
+cp .env.example .env && chmod 600 .env
+# if .env already exists, keep it and edit that file instead of copying over it
+uv run --env-file .env jev-loop-doctor
+```
+
+  `--env-file` takes a real file path and loads it into the process environment before the command
+  runs; nothing in the library reads or parses the file, and the value is never printed.
+
+### Offline preflight
+
+```sh
+uv run jev-loop-doctor            # human report
+uv run jev-loop-doctor --json     # same report for scripts and agents
+uv run jev-loop-doctor --offline  # installation/runtime check; no key required
+```
+
+The doctor validates Python ≥3.12, the host's Unix `fcntl` requirement, the endpoint/model/timeout
+values and credential presence. Its JSON says `mode: "preflight"` and keeps
+`authentication`, `connectivity` and `model_availability` as `not_checked`: a green report is a
+local configuration statement, not a live-API verification. Exit codes: `0` local configuration
+ok, `2` credential missing/blank/unusable, `3` invalid non-secret configuration or unsupported
+platform, `1` unexpected error. Test it per run with `--bundle examples/live-files/bundle.json` to
+also check the manifest the run will load.
+
+### A runnable live reference
+
+[`examples/live-files`](examples/live-files) is self-contained across machines and needs no private
+repository or browser profile: real Jev decisions, a real filesystem environment with fixed
+**synthetic** content, and an independent verifier.
+
+```sh
+# the variable is already in this process environment:
+uv run python examples/live-files/run.py --max-steps 8 \
+    --workspace "$(mktemp -d)/workspace"
+
+# or load a private file explicitly (a real path; the value is never read by the library):
+uv run --env-file .env python examples/live-files/run.py --max-steps 8 \
+    --workspace "$(mktemp -d)/workspace"
+```
+
+What happens, in order:
+
+1. Configuration and credential are validated first; the workspace is created only after that.
+2. The workspace must be new or empty — a non-empty directory or a symlink is refused, and the
+   example never overwrites, moves or deletes anything it did not create itself.
+3. Each loop step is one real Jev decision request over the candidates offered in that frame;
+   `--max-steps` (default 8) bounds the number of requests.
+4. The environment performs real file operations (`inbox/alpha.txt` content, archiving
+   `inbox/gamma.log` to `archive/gamma.log`) and the loop re-reads the directory after each step.
+5. `LiveFilesVerifier` re-reads the filesystem itself and decides; the model's answer cannot make
+   it pass. Evidence is written to `verification.json` in the workspace, which the run prints.
+6. Nothing is deleted automatically: review the workspace and remove it yourself.
+
+The runner exits `0` on success, `2` when the credential is missing or the service rejected it, `1` when
+the loop itself failed or verification stayed unsatisfied, and `3` for a configuration, workspace or
+command-line usage error. It is a reference example, not a production adapter and not a benchmark.
+`examples/` is not part of the built wheel: run it from the source clone (as above), while
+`jev-loop-doctor` is installed with the package and also works outside a checkout. The same adapter and
+verifier also run as a managed bundle:
+
+```sh
+uv run jev-loop-host rpc <<'JSON'
+{"action":"start","owner_id":"engineer","idempotency_key":"live-files-1",
+ "project_root":"/path/to/jev-loop","bundle":"examples/live-files/bundle.json",
+ "task":{"goal":"prepare the synthetic inbox"},"max_runtime_seconds":120}
+JSON
+```
+
+When the key comes from an explicit file, prefix the same command with `uv run --env-file .env`.
+
+Then read `inspect` / `events` and stop with `stop`. A run counts as done only when its status is
+terminal, `resources_released` is true and `controller.verification.verdict` is `satisfied`. The
+bundle always works in `run_dir/artifacts/workspace`, so two runs can never share a directory, and
+its `bundle_config` accepts only `model`, `api_url`, `timeout` and `max_steps` (1..64, default 8).
+`inspect` reports the effective `max_steps` and the `decision_requests` actually made.
+
+### pi, OpenRouter and other providers
+
+pi-jev does not read pi's credentials for Jev. The worker inherits the environment of the pi
+process, so start pi from a process where the variable is already loaded — export it in the shell, or
+let uv load a file explicitly:
+
+```sh
+uv run pi                     # the variable is already exported in this shell
+uv run --env-file .env pi     # or load a private file explicitly
+```
+
+`/reload` does not re-import the key; start a new pi process.
+
+Slow reasoning stays a pi concern configured in pi itself. If your pi session uses another
+provider — OpenRouter, for example — configure it in pi, not here: pi supports
+`/login openrouter` and the `OPENROUTER_API_KEY` variable (see `docs/providers.md` and
+`docs/models.md` in the [pi repository](https://github.com/earendil-works/pi)). `TYPESAFE_API_KEY`
+is only for Jev decision requests through `policies/jev.py`; jev-loop ships no other provider
+client.
 
 ## What keeps it reliable
 

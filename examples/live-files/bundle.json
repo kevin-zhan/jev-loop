@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "entrypoint": "controller:build",
+  "python_path": ".",
+  "config": {}
+}

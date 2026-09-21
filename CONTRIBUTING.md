@@ -21,11 +21,20 @@ pi package over RPC) additionally needs Node and the pi CLI.
 ```sh
 uv run pytest          # everything is offline; no paid APIs are called
 uv run ruff check .
+uv run jev-loop-doctor --offline   # local configuration preflight; no network request
 npm test               # only needed when extensions/ or package.json changed
 ```
 
 - Tests must not call paid models. When a real wire shape needs checking, write an explicit script and
-  state its cost in the pull request.
+  state its cost in the pull request. The offline suite covers the transport with a loopback HTTP
+  fixture, including auth failures, timeouts, redirects and error-body redaction.
+- Live Jev runs are never part of the test suite. A live script has to state its request budget, use
+  synthetic inputs and a dedicated temporary directory, and report how many decision requests it
+  actually made; failures and timeouts count against the budget and are never retried automatically.
+- Credentials come from the process environment (`TYPESAFE_API_KEY` by default) or an explicit
+  `request_fn` injection — never from a command-line flag, a task/spec, a bundle config, an event or
+  a cognition message, and never by scanning a `.env` file, keychain or another project. The doctor
+  is the offline preflight and must not print a credential value, length or hash.
 - New behavior needs matching tests. The expected coverage includes: a rejected frame binding, the four
   receipt states, unresolved operations never being resent, an action with no effect still allowing
   progress after the candidate set narrows, a reversible cycle suspending by default

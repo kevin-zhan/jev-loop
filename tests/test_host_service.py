@@ -104,7 +104,15 @@ def test_event_reads_are_cursor_based_and_bounded(host_home):
 def test_cognition_wait_does_not_stop_world_or_control(host_home):
     started = start(host_home)
     run_id = started["run"]["run_id"]
-    first = wait_for(host_home, run_id, lambda item: bool(item["pending_cognition"]))
+    # The coordinator emits the first controller snapshot slightly after the engine's cognition
+    # request, so a status that already lists pending_cognition can still carry an empty controller
+    # projection (cognition_requested seq 3, controller_snapshot seq 4 in every observed run).
+    # Wait for the state this test actually reads instead of racing the status projection.
+    first = wait_for(
+        host_home,
+        run_id,
+        lambda item: bool(item["pending_cognition"]) and "world_ticks" in item.get("controller", {}),
+    )
     time.sleep(0.25)
     later = inspect(host_home, run_id)
 

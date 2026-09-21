@@ -24,6 +24,7 @@ Issues = "https://github.com/kevin-zhan/jev-loop/issues"
 Documentation = "https://github.com/kevin-zhan/jev-loop/blob/main/docs/getting-started.html"
 [project.scripts]
 jev-loop-demo = "jev_loop.demo:main"
+jev-loop-doctor = "jev_loop.doctor:main"
 jev-loop-host = "jev_loop.host.cli:main"
 
 [build-system]

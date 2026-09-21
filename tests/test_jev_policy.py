@@ -7,9 +7,11 @@ end to end through the actual policy code path.
 
 from __future__ import annotations
 
+import traceback
+
 import pytest
 
-from jev_loop import Loop, RunStatus, TaskSpec
+from jev_loop import Loop, RunStatus, StopReason, TaskSpec
 from jev_loop.adapters.mock import SwitchboardEnvironment, SwitchboardVerifier
 from jev_loop.core.events import Event, EventKind
 from jev_loop.core.frame import build_frame
@@ -147,3 +149,50 @@ def test_dead_action_is_absent_from_the_next_request():
     criteria = second["questions"]["next_action"]["criteria"]
     assert not any((entry.get("args") or {}).get("name") == "a" for entry in criteria.values())
     assert second["state"]["excluded_actions"] == ["switch:a"]
+
+
+PROVIDER_MARKER = "provider-body-marker-in-answer"
+
+
+def test_malformed_answers_never_echo_provider_text():
+    frame = make_frame()
+    responses = [
+        {"answers": {"next_action": {"type": PROVIDER_MARKER, "choice": "a1"}}},
+        {"answers": {"next_action": {"type": "choice", "choice": f" {PROVIDER_MARKER}"}}},
+        {"answers": {"next_action": {"type": "choice", "choice": PROVIDER_MARKER}}},
+        {"answers": {"next_action": {"type": "choice", "choice": 7}}},
+        {"answers": {"next_action": []}},
+        {"answers": []},
+    ]
+    for response in responses:
+        with pytest.raises(ResponseShapeError) as caught:
+            parse_response(frame, response)
+        message = str(caught.value)
+        assert PROVIDER_MARKER not in message
+        rendered = "".join(traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__))
+        assert PROVIDER_MARKER not in rendered
+
+
+def test_policy_protocol_error_detail_keeps_the_run_log_free_of_provider_text():
+    env = SwitchboardEnvironment({"a": False})
+    policy = JevPolicy(
+        request_fn=lambda payload: {
+            "answers": {"next_action": {"type": "choice", "choice": PROVIDER_MARKER}}
+        }
+    )
+    loop = Loop(
+        task=TaskSpec(goal="turn a on"),
+        environment=env,
+        policy=policy,
+        verifier=SwitchboardVerifier(env, {"a": True}),
+    )
+    result = loop.run()
+
+    assert result.status is RunStatus.FAILED
+    assert result.stop_reason is StopReason.POLICY_ERROR
+    details = [
+        str(event.data.get("detail", "")) for event in loop.timeline() if event.kind.value == "run_finished"
+    ]
+    assert details
+    assert all(PROVIDER_MARKER not in detail for detail in details)
+    assert env.world == {"a": False}  # nothing was executed

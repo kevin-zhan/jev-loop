@@ -30,8 +30,12 @@ or sub-loops.
 - Operations in `pending` / `unknown` may only be queried, never resent; `idempotency=NONE` actions are
   never retried blindly.
 - Never write real API keys, cookies or page login sessions into code or tests. The only networking code
-  in the kernel is `http_request_fn` in `policies/jev.py`. A bundle's own network adapter must stay in
-  the bundle, and secrets must never reach host events or snapshots.
+  in the kernel is `http_request_fn` in `policies/jev.py`. Live credentials come from the process
+  environment (`TYPESAFE_API_KEY` by default) through `default_request_fn()`, or from an explicit
+  `request_fn` injection; a missing or unusable credential fails before the first action and never falls
+  back to a mock. `uv run jev-loop-doctor` is the offline preflight and must not print a credential
+  value, length or hash. A bundle's own network adapter must stay in the bundle, and secrets must never
+  reach host events or snapshots.
 - A managed controller's `request_stop` must be thread-safe and release held inputs synchronously; real
   devices also need an out-of-process watchdog. `accepted` is not a stop confirmation: only terminal
   status, `resources_released=true` and the executor's confirmation mean stopped. When a worker dies
@@ -50,15 +54,21 @@ English only. Code comments, runtime messages and commit messages are English.
 uv sync
 uv run pytest          # everything is offline: mock environment, deterministic policy, fake requester
 uv run ruff check .
+uv run jev-loop-doctor --offline   # local configuration preflight, no network request, no key needed
 npm test                                # real pi RPC load, no model calls
 node --experimental-strip-types --check extensions/pi-jev.ts
 uv run jev-loop-demo --scenario clean   # all three scenarios: clean / noop / cycle
 ```
 
 - Tests must not call paid APIs; when a real wire shape needs verification, write an explicit script and
-  state its cost — such scripts do not belong in pytest.
+  state its cost — such scripts do not belong in pytest. Offline transport coverage uses a loopback
+  HTTP fixture (auth failure, timeout, redirect refusal, error-body redaction).
+- Live Jev runs are explicit and budgeted: `TYPESAFE_API_KEY` must already be in the process
+  environment (no `.env` parsing, keychain or other-project lookup), the request count is bounded and
+  reported, failures and timeouts count against the budget, and nothing is retried automatically.
 - Expected coverage: a rejected frame binding, the four receipt states, unresolved operations never
   being resent, an action with no effect still allowing progress after the candidate set narrows, a
   reversible cycle suspending by default (`awaiting_evidence`) instead of burning the step budget,
   failing with `cycle_detected` only after escalations hit the limit, verification `unknown` not
-  counting as success, and reducer purity.
+  counting as success, a missing or header-unsafe credential failing before any action, and reducer
+  purity.

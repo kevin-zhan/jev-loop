@@ -20,10 +20,17 @@ pi CLI。
 ```sh
 uv run pytest          # 全部离线；不调用付费 API
 uv run ruff check .
+uv run jev-loop-doctor --offline   # 本地配置预检；不发起网络请求
 npm test               # 只在改到 extensions/ 或 package.json 时需要
 ```
 
-- 测试不得调用付费模型。需要验证真实线上形状时，写显式脚本，并在 PR 里说明成本。
+- 测试不得调用付费模型。需要验证真实线上形状时，写显式脚本，并在 PR 里说明成本。离线套件用 loopback
+  HTTP fixture 覆盖传输层，包括认证失败、超时、redirect 与错误 body 不回显。
+- 真实 Jev run 永远不进测试套件。真实脚本必须写明请求预算，只用合成输入与专用临时目录，并报告实际发生
+  了多少次决策请求；失败与超时都计入预算，绝不自动重试。
+- 凭据来自进程环境（默认 `TYPESAFE_API_KEY`）或显式的 `request_fn` 注入——绝不来自命令行 flag、
+  task/spec、bundle config、事件或 cognition 消息，也不去扫 `.env`、keychain 或其他项目。doctor
+  是离线预检，不得输出凭据的值、长度或 hash。
 - 新增行为要有对应测试。预期覆盖范围包括：frame 绑定被拒、四态回执、未决操作不重发、无效果动作在
   候选集收窄后仍能推进、可逆循环默认挂起（`awaiting_evidence`）且只在升级到上限后才以
   `cycle_detected` 失败、verification `unknown` 不算成功、reducer 纯性。

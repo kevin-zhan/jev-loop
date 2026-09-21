@@ -96,14 +96,15 @@
     <li><a href="#concepts">1. 它由哪几层组成</a></li>
     <li><a href="#setup">2. 准备环境</a></li>
     <li><a href="#path-a">3. 路径 A：当 Python 库用</a></li>
-    <li><a href="#path-b">4. 路径 B：在 pi 里用</a></li>
-    <li><a href="#path-c">5. 路径 C：接自己的宿主</a></li>
-    <li><a href="#bundle">6. 写自己的 bundle</a></li>
-    <li><a href="#safety">7. 生命周期与安全语义</a></li>
-    <li><a href="#verify">8. 验证与“完成”的口径</a></li>
-    <li><a href="#pitfalls">9. 常见坑</a></li>
-    <li><a href="#map">10. 目录地图</a></li>
-    <li><a href="#publish">11. 仓库维护（所有者）</a></li>
+    <li><a href="#live">4. 配置凭据并跑一次真实 Jev 用例</a></li>
+    <li><a href="#path-b">5. 路径 B：在 pi 里用</a></li>
+    <li><a href="#path-c">6. 路径 C：接自己的宿主</a></li>
+    <li><a href="#bundle">7. 写自己的 bundle</a></li>
+    <li><a href="#safety">8. 生命周期与安全语义</a></li>
+    <li><a href="#verify">9. 验证与“完成”的口径</a></li>
+    <li><a href="#pitfalls">10. 常见坑</a></li>
+    <li><a href="#map">11. 目录地图</a></li>
+    <li><a href="#publish">12. 仓库维护（所有者）</a></li>
   </ol>
 </nav>
 
@@ -179,7 +180,7 @@ bundle（你项目里的代码 + manifest）
     <tr><td><a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a>（推荐）或 pip</td><td>开发依赖只有 pytest 与 ruff</td></tr>
     <tr><td>Node ≥ 22</td><td>Node 是 pi 自身的依赖，也用于跑扩展侧的 RPC 测试 <code>npm test</code></td></tr>
     <tr><td>pi（可选）</td><td>只有走“在 pi 里用”这条路才需要</td></tr>
-    <tr><td>TypeSafe / Jev API key（可选）</td><td>仓库内所有测试与 demo 都不联网、不需要 key；自己接真实 Jev 时才要</td></tr>
+    <tr><td>TypeSafe / Jev API key</td><td>只在真实 Jev 决策请求时需要。仓内所有测试与 demo 都离线、不需要 key。接真实服务时把 <code>TYPESAFE_API_KEY</code> 放进进程环境（见第 4 节）；库不自行搜 key，也绝不静默降级成 mock</td></tr>
   </table>
   <pre><code>git clone https://github.com/kevin-zhan/jev-loop.git   # 私有仓库：需要访问权限
 cd jev-loop
@@ -205,7 +206,7 @@ verifications=['satisfied'] (only 'satisfied' counts as success)</code></pre>
   <p>该 demo 离线、使用确定性 mock 环境：不调用付费 Jev 服务，也不做任何真实业务验收。</p>
   <p>接自己的环境，只需要实现三个角色——环境、策略、验证器：</p>
   <pre><code>from jev_loop import Loop, TaskSpec
-from jev_loop.policies.jev import JevPolicy, http_request_fn
+from jev_loop.policies.jev import JevPolicy, default_request_fn
 
 loop = Loop(
     task=TaskSpec(
@@ -213,13 +214,14 @@ loop = Loop(
         success_criteria=("设置页显示深色模式已开启",),
     ),
     environment=my_adapter,                       # observe / offer / execute / query / validate
-    policy=JevPolicy(request_fn=http_request_fn(api_key=os.environ["TYPESAFE_API_KEY"])),
+    policy=JevPolicy(request_fn=default_request_fn()),   # 从进程环境读 TYPESAFE_API_KEY
     verifier=my_verifier,                         # 独立证据；不接受模型的 DONE
 )
 result = loop.run()
 print(result.status, result.stop_reason)</code></pre>
-  <p>这段代码是集成示意，不是可直接运行的示例：<code>my_adapter</code>、<code>my_verifier</code> 与 API key
-  都需要你自己提供——一个 <code>Environment</code> 实现、一个独立的 <code>Verifier</code>，以及 TypeSafe / Jev API key。</p>
+  <p>这段代码是集成示意，不是可直接运行的示例：<code>my_adapter</code> 与 <code>my_verifier</code>
+  需要你自己提供。<code>default_request_fn()</code> 从进程环境读取凭据；缺失或不可用会在第一个动作之前
+  报错。已持有密钥的代码仍可用 <code>http_request_fn(api_key=...)</code> 显式注入。完整可运行用例见第 4 节。</p>
   <p>要点：</p>
   <ul>
     <li>策略返回的候选 id <strong>只在本帧有效</strong>；循环在执行前会重新校验观测 revision 与前置条件。</li>
@@ -228,8 +230,106 @@ print(result.status, result.stop_reason)</code></pre>
   </ul>
 </section>
 
+<section id="live">
+  <h2>4. 配置凭据并跑一次真实 Jev 用例</h2>
+  <p class="lede">快速开始 demo 与上文测试套件均离线。真实 run 需要由你自己提供的 TypeSafe / Jev API
+  key；本节是从干净克隆走到一次真实 Jev 决策、拿到证据、并能干净停止的受支持路径。不需要私有仓、浏览器
+  profile 或隐藏环境。</p>
+
+  <h3>4.1 凭据</h3>
+  <ul>
+    <li>受支持的入口是环境变量 <code>TYPESAFE_API_KEY</code>，由 <code>jev_loop.policies.jev</code> 的
+      <code>default_request_fn()</code> 读取。<code>default_request_fn(env_name=...)</code> 可换变量名；
+      已持有密钥的代码仍保留 <code>http_request_fn(api_key=...)</code> 显式注入。</li>
+    <li>库<strong>只读进程环境</strong>：不解析 <code>.env</code>、不查 keychain、不读其他项目配置。</li>
+    <li>key 缺失、空白或含无法放进 header 的字符时，会在第一个网络或环境动作之前抛出具名错误；
+      <strong>绝不静默降级成 mock</strong>。</li>
+    <li>不要把 key 写进命令行 flag、run spec/task、<code>bundle_config</code>、事件、snapshot 或
+      cognition 消息：这些都会被持久化并回读给 agent。</li>
+  </ul>
+  <pre><code>export TYPESAFE_API_KEY=...      # 变量已在当前进程环境中
+uv run jev-loop-doctor
+
+# 仅当你还没有把该 key 保存在本地文件时：
+cp .env.example .env &amp;&amp; chmod 600 .env
+# 若 .env 已存在，请保留它并直接编辑该文件，不要复制覆盖
+uv run --env-file .env jev-loop-doctor</code></pre>
+  <div class="callout warn">
+    <p><code>--env-file</code> 接的是真实文件路径，由 uv 在命令运行前加载进进程环境；库自身不读、不解析该
+    文件，也不会打印其值。变量已经 export 时不需要该 flag。pi 必须从已加载该变量的进程启动——
+    <code>/reload</code> 不会重新导入 key。</p>
+  </div>
+
+  <h3>4.2 离线预检（不发起网络请求）</h3>
+  <pre><code>uv run jev-loop-doctor            # 人类可读报告
+uv run jev-loop-doctor --json     # 面向脚本/agent 的同一份报告
+uv run jev-loop-doctor --offline  # 只查安装与运行时；不需要 key
+uv run jev-loop-doctor --bundle examples/live-files/bundle.json   # 顺带检查 manifest</code></pre>
+  <p>doctor 校验 Python ≥ 3.12、host 依赖的 Unix <code>fcntl</code>、endpoint / model / timeout 取值，
+  以及凭据是否存在。它的 JSON 标注 <code>mode: "preflight"</code>，并把 <code>authentication</code>、
+  <code>connectivity</code>、<code>model_availability</code> 保持为 <code>not_checked</code>：绿灯只是本地
+  配置结论，不是真实 API 验收。它绝不打印凭据的值、长度或 hash。</p>
+  <table>
+    <tr><th>退出码</th><th>含义</th></tr>
+    <tr><td><code>0</code></td><td>所检查的本地配置有效</td></tr>
+    <tr><td><code>2</code></td><td>凭据缺失、空白或无法作为 HTTP header 值使用</td></tr>
+    <tr><td><code>3</code></td><td>非秘密配置无效，或平台不支持运行时</td></tr>
+    <tr><td><code>1</code></td><td>未知内部错误（<code>--json</code> 下同样可机器读取）</td></tr>
+  </table>
+
+  <h3>4.3 可直接运行的真实参考用例（合成数据 + 真实文件系统）</h3>
+  <p><code>examples/live-files/</code> 是给外部工程师的自包含参考：真实 Jev 决策请求、带固定合成文件
+  的本机文件系统环境，以及独立 verifier。它是参考示例，不是生产适配器，也不是 benchmark；
+  <code>examples/</code> 不会打进构建出的 wheel，请从源码克隆运行；<code>jev-loop-doctor</code>
+  随包安装，在克隆目录之外也能用。</p>
+  <pre><code># 变量已在当前进程环境中：
+uv run python examples/live-files/run.py --max-steps 8 \
+    --workspace "$(mktemp -d)/workspace"
+
+# 或显式加载私有文件（真实路径；不要自行读取该值）：
+uv run --env-file .env python examples/live-files/run.py --max-steps 8 \
+    --workspace "$(mktemp -d)/workspace"</code></pre>
+  <ol>
+    <li>先校验配置与凭据；通过之后才创建工作区。</li>
+    <li>工作区必须是新建或空目录——非空目录或 symlink 会被拒绝；示例绝不覆盖、移动或删除不是它自己创建的内容。</li>
+    <li>每个循环步骤就是一次真实的 Jev 决策请求，候选集来自该 frame；<code>--max-steps</code>（默认 8）限制请求次数。</li>
+    <li>环境执行真实文件操作，循环在每一步后重新读取目录，因此无可见效果的一步会被如实记录。</li>
+    <li><code>LiveFilesVerifier</code> 自己重读文件系统并判定；模型的回答无法让它通过。证据写入工作区<strong>内</strong>的
+      <code>verification.json</code>（默认 <code>&lt;workspace&gt;/verification.json</code>），run 会打印工作区路径。</li>
+    <li>不会自动删除任何东西：请先复核工作区，再自行删除。</li>
+  </ol>
+  <p>它的退出码：成功 <code>0</code>；凭据缺失或被服务拒绝 <code>2</code>；循环本身失败或验证未满足
+  <code>1</code>；配置、工作区或命令行用法错误 <code>3</code>。</p>
+
+  <h3>4.4 同一个用例在 managed host 下运行</h3>
+  <p>同一个 adapter 与 verifier 也可作为 bundle 运行，这条路径会真正走到租约、事件日志、停止与资源释放：</p>
+  <pre><code>uv run jev-loop-host rpc &lt;&lt;'JSON'
+{"action":"start","owner_id":"engineer","idempotency_key":"live-files-1",
+ "project_root":"/path/to/jev-loop","bundle":"examples/live-files/bundle.json",
+ "task":{"goal":"prepare the synthetic inbox"},"max_runtime_seconds":120}
+JSON</code></pre>
+  <p>key 来自显式文件时，给同一条命令加上前缀 <code>uv run --env-file .env</code>。</p>
+  <p>之后用 <code>inspect</code> / <code>events</code> 读状态与证据，需要时 <code>stop</code>。只有 terminal
+  status、<code>resources_released=true</code> 且 <code>controller.verification.verdict=satisfied</code>
+  才算完成——<code>start</code> 返回 <code>ok</code> 不是证据。该 bundle 始终在
+  <code>run_dir/artifacts/workspace</code> 工作，两次 run 不可能共享目录；它的
+  <code>bundle_config</code> 只接受 <code>model</code>、<code>api_url</code>、<code>timeout</code> 与
+  <code>max_steps</code>（1..64，默认 8）。<code>inspect</code> 会报告生效的 <code>max_steps</code>
+  与实际发生的 <code>decision_requests</code>。</p>
+
+  <h3>4.5 pi、OpenRouter 与其他 provider</h3>
+  <p>pi-jev 不会替 Jev 读取 pi 的凭据。worker 继承 pi 进程的环境，因此请从已加载该变量的进程启动 pi：</p>
+  <pre><code>uv run pi                     # 变量已在当前 shell 环境中
+uv run --env-file .env pi     # 或显式加载私有文件；/reload 不会重新导入</code></pre>
+  <p>慢思考始终是 pi 自己的事，在 pi 里配置。如果你的 pi 会话使用其他 provider（例如 OpenRouter），
+  请在 pi 侧配置：pi 支持 <code>/login openrouter</code> 与 <code>OPENROUTER_API_KEY</code> 变量
+  （见 <a href="https://github.com/earendil-works/pi">pi 仓库</a>的 <code>docs/providers.md</code>、
+  <code>docs/models.md</code>）。<code>TYPESAFE_API_KEY</code> 只用于经 <code>policies/jev.py</code>
+  发出的 Jev 决策请求；本仓不自带其他 provider 客户端，也不读 pi 的 auth 文件。</p>
+</section>
+
 <section id="path-b">
-  <h2>4. 路径 B：在 pi 里用（pi-jev 扩展）</h2>
+  <h2>5. 路径 B：在 pi 里用（pi-jev 扩展）</h2>
   <p>仓库根就是一个 pi package（<code>package.json</code> 声明了 <code>extensions/pi-jev.ts</code> 与 <code>skills/pi-jev</code>）。本仓不负责安装 pi 本身：请按 pi 的官方安装说明安装（见 <a href="https://github.com/earendil-works/pi">pi 仓库</a>），确认系统里有 Python 3.12+，再从克隆目录注册这个本地 package：</p>
   <pre><code>git clone https://github.com/kevin-zhan/jev-loop.git   # 私有仓库：需要访问权限
 cd jev-loop
@@ -260,7 +360,7 @@ pi install .            # 注册本地 package，就地引用这个克隆目录
 </section>
 
 <section id="path-c">
-  <h2>5. 路径 C：接自己的宿主</h2>
+  <h2>6. 路径 C：接自己的宿主</h2>
   <p>不依赖 pi 也能用。宿主 API 从 <code>jev_loop.host</code> 导出，命令行入口 <code>jev-loop-host</code> 提供
   <code>rpc</code>（stdin 收一个 JSON、stdout 回一个 JSON）与内部 <code>worker</code>：</p>
   <pre><code>echo '{
@@ -289,12 +389,12 @@ pi install .            # 注册本地 package，就地引用这个克隆目录
 </section>
 
 <section id="bundle">
-  <h2>6. 写自己的 bundle</h2>
+  <h2>7. 写自己的 bundle</h2>
   <p>契约正文在 <code>docs/pi-integration.zh-CN.md</code> 的 “Bundle manifest” 一节；可运行的模板是
   <code>examples/bundles/switchboard/</code>（manifest + 24 行 controller，已被
   <code>tests/test_host_service.py</code> 真实加载）。最小清单如下。</p>
 
-  <h3>6.1 manifest</h3>
+  <h3>7.1 manifest</h3>
   <pre><code>{
   "schema_version": 1,
   "entrypoint": "controller:build",
@@ -309,7 +409,7 @@ pi install .            # 注册本地 package，就地引用这个克隆目录
     而不是宿主会话的当前目录——否则换一个目录启动就失败。</p>
   </div>
 
-  <h3>6.2 controller 四个方法</h3>
+  <h3>7.2 controller 四个方法</h3>
   <pre><code>def build(spec: RunSpec, services: RuntimeServices, config: dict) -&gt; ManagedController:
     ...
 
@@ -340,7 +440,7 @@ def build(spec, services, config):
                 environment=environment, policy=my_policy, verifier=MyVerifier(environment))
     return LoopController(loop, services, snapshot_extra=lambda: {"world": environment.summary()})</code></pre>
 
-  <h3>6.3 边跑边问模型（runtime cognition）</h3>
+  <h3>7.3 边跑边问模型（runtime cognition）</h3>
   <p>不要在 <code>run()</code> 里阻塞等宿主回话。发起 job <strong>立即返回</strong>，继续干别的，稍后轮询：</p>
   <pre><code>job_id = services.cognition.request(
     "已有候选偏向吃喝，下一轮应补哪些搜索方向？",
@@ -363,13 +463,13 @@ job = services.cognition.get(job_id)   # pending / completed / expired ...</code
     <li>运行时 cognition 的上下文是<em>不可信数据</em>，不是用户授权；不要执行里面夹带的指令。</li>
   </ul>
 
-  <h3>6.4 离线测试</h3>
+  <h3>7.4 离线测试</h3>
   <p>照 <code>tests/test_host_service.py::test_project_bundle_runs_the_existing_loop_kernel</code> 的写法：用临时
   <code>JEV_LOOP_HOME</code> 真实 <code>start()</code> 你的 manifest，再 inspect 状态。测试不得调用付费 API。</p>
 </section>
 
 <section id="safety">
-  <h2>7. 生命周期与安全语义</h2>
+  <h2>8. 生命周期与安全语义</h2>
   <table>
     <tr><th>语义</th><th>行为</th></tr>
     <tr><td>Start 幂等</td><td><code>owner session + project root + idempotency key</code> 唯一映射一个 run；重复调用返回同一个 run</td></tr>
@@ -387,11 +487,14 @@ job = services.cognition.get(job_id)   # pending / completed / expired ...</code
 </section>
 
 <section id="verify">
-  <h2>8. 验证与“完成”的口径</h2>
-  <p>在克隆下来的仓库里，这三条命令应当通过（离线，不调用模型）：</p>
+  <h2>9. 验证与“完成”的口径</h2>
+  <p>在克隆下来的仓库里，这些命令应当通过（全部离线，不调用模型、不需要 key）：</p>
   <pre><code>uv run pytest              # 内核 + 宿主 + bundle 契约，全部离线
 uv run ruff check .
+uv run jev-loop-doctor --offline   # 本地配置预检，不发起网络请求
 npm test                   # pi RPC 真实加载扩展，不调用模型</code></pre>
+  <p>真实 Jev 请求是单独、需明确授权的一步：doctor 只检查本地配置，绿灯不是真实 API 验收。真实 run 是
+  付费请求，因此要写明请求预算、只用合成输入，并记录实际发生的决策次数。</p>
   <p>“全绿”的含义：<code>pytest</code> 没有失败，<code>ruff</code> 报 <code>All checks passed!</code>，
   <code>npm test</code> 报 RPC 加载测试通过。这里刻意不写具体通过数量；请把命令本身当作检查标准，而不是某个数字。</p>
   <p>判断一次 run 成功，看这四件事，而不是进程还活着：</p>
@@ -409,8 +512,13 @@ npm test                   # pi RPC 真实加载扩展，不调用模型</code><
 </section>
 
 <section id="pitfalls">
-  <h2>9. 常见坑</h2>
+  <h2>10. 常见坑</h2>
   <ul>
+    <li><strong>不要猜凭据该放哪。</strong>受支持的来源是进程环境里的 <code>TYPESAFE_API_KEY</code>
+      （在 shell 里 export，或用 <code>--env-file .env</code> 让 uv 加载私有文件）；放进 task、<code>bundle_config</code>、事件或 cognition
+      消息里等于把它持久化。缺 key 会在第一个动作前失败，修好环境后请以<strong>新的</strong>
+      <code>idempotency_key</code> 重新 start——复用同一个 key 会返回旧的失败 run。</li>
+    <li><strong>加载 key 后要重启 pi。</strong><code>/reload</code> 只是重载扩展，不会把另一个 shell 的环境变量导进来。</li>
     <li><strong>不要为了“更顺畅”移除守卫</strong>（无效果 / 重复 / 循环）。确定性策略下它们是唯一的逃生阀：一步要么改变帧，要么停下来。</li>
     <li><strong>别把模型的 DONE 当验收</strong>：策略只能 <code>request_finish</code>，verifier 才说了算。</li>
     <li><strong>pending / unknown 只许查询，不许重发</strong>；<code>idempotency=NONE</code> 的动作永远不能盲目重试。</li>
@@ -423,7 +531,7 @@ npm test                   # pi RPC 真实加载扩展，不调用模型</code><
 </section>
 
 <section id="map">
-  <h2>10. 目录地图</h2>
+  <h2>11. 目录地图</h2>
   <table>
     <tr><th>路径</th><th>内容</th></tr>
     <tr><td><code>src/jev_loop/core/</code></td><td>state、events、reduce、frame、guards、loop —— 显式状态内核</td></tr>
@@ -433,6 +541,8 @@ npm test                   # pi RPC 真实加载扩展，不调用模型</code><
     <tr><td><code>extensions/pi-jev.ts</code></td><td>pi 工具面、后台事件投递、session heartbeat</td></tr>
     <tr><td><code>skills/pi-jev/</code></td><td>agent 使用手册（何时用、怎么处理 cognition、怎么验收）</td></tr>
     <tr><td><code>examples/bundles/switchboard/</code></td><td>最小 bundle 模板（本仓测试会真实加载它）</td></tr>
+    <tr><td><code>examples/live-files/</code></td><td>可直接运行的真实参考：合成文件 + 真实文件系统环境、真实 Jev 策略、独立 verifier、host manifest</td></tr>
+    <tr><td><code>src/jev_loop/doctor.py</code></td><td><code>jev-loop-doctor</code>：本地 Jev 配置离线预检（不发起网络请求）</td></tr>
     <tr><td><code>docs/design.md</code>、<code>docs/pi-integration.md</code></td><td>内核不变量与守卫语义；pi 集成 / bundle 契约正文</td></tr>
     <tr><td><code>tests/</code></td><td>全部离线；<code>tests/pi-extension/</code> 用 pi RPC 真实加载扩展</td></tr>
     <tr><td><code>~/.local/state/jev-loop/runs/&lt;run-id&gt;/</code></td><td>运行时数据：<code>spec.json · events.jsonl · status.json · inbox/ acks/ · artifacts/</code></td></tr>
@@ -440,16 +550,16 @@ npm test                   # pi RPC 真实加载扩展，不调用模型</code><
 </section>
 
 <section id="publish">
-  <h2>11. 仓库维护（所有者视角）</h2>
+  <h2>12. 仓库维护（所有者视角）</h2>
   <p>这一节不是给使用者的，记的是仓库现状与发版约定：</p>
   <table>
     <tr><th>项</th><th>现状 / 约定</th></tr>
     <tr><td>许可证</td><td><code>LICENSE</code> = MIT（Copyright (c) 2026 kevin-zhan）；<code>pyproject.toml</code> 与 <code>package.json</code> 都标了 <code>MIT</code></td></tr>
-    <tr><td>CI</td><td><code>.github/workflows/ci.yml</code>：<code>uv run pytest</code> + <code>uv run ruff check .</code>，另有一个 job 装 pi 后跑 <code>npm test</code></td></tr>
+    <tr><td>CI</td><td><code>.github/workflows/ci.yml</code>：<code>uv run pytest</code> + <code>uv run ruff check .</code> + <code>uv run jev-loop-doctor --offline</code>（CI 不带 key），另有一个 job 装 pi 后跑 <code>npm test</code></td></tr>
     <tr><td>设计规范</td><td><code>spec/</code>（questions / state / fixture）已纳入版本控制</td></tr>
     <tr><td>发版</td><td>版本号在 <code>pyproject.toml</code> 与 <code>package.json</code> 同步；<code>git tag vX.Y.Z &amp;&amp; git push origin vX.Y.Z</code>。当前没有已发布的 tag</td></tr>
     <tr><td>文档语言</td><td>英文为 canonical；每份英文文档都有信息对等的中文副本（<code>*.zh-CN.md</code> / <code>*.zh-CN.html</code>）；<code>AGENTS.md</code> 与 <code>skills/pi-jev/SKILL.md</code> 只用英文；代码注释、运行时文案与提交信息为英文</td></tr>
-    <tr><td>隐私</td><td>仓库内测试与 demo 都不需要 key；<code>.gitignore</code> 排除 <code>.venv/ .env .env.* artifacts/</code>；提交前用 <code>git grep -i</code> 自查 token、cookie、内网地址</td></tr>
+    <tr><td>隐私</td><td>仓库内测试与 demo 都不需要 key；<code>.gitignore</code> 排除 <code>.venv/ .env .env.* artifacts/</code>，同时跟踪内容为空的 <code>.env.example</code>；<code>jev-loop-doctor</code> 只输出变量名与是否存在（绝不输出值、长度或 hash）；提交前用 <code>git grep -i</code> 自查 token、cookie、内网地址</td></tr>
   </table>
 </section>
 
