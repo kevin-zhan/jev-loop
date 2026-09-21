@@ -1,0 +1,6 @@
+{
+  "schema_version": 2,
+  "name": "example-notes",
+  "version": "0.3.1",
+  "entrypoint": "bundle_controller:build"
+}

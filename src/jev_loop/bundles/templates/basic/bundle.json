@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "name": "__BUNDLE_NAME__",
+  "version": "__BUNDLE_VERSION__",
+  "description": "__BUNDLE_DESCRIPTION__",
+  "when_to_use": "Describe the concrete situation that should start this bundle. If the task is a single tool call, this bundle is not needed.",
+  "entrypoint": "bundle_controller:build",
+  "python_path": ".",
+  "inputs_schema": {
+    "type": "object",
+    "properties": {
+      "example_input": {"type": "string", "minLength": 1}
+    },
+    "required": ["example_input"],
+    "additionalProperties": false
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "example_setting": {"type": "integer", "minimum": 1, "maximum": 60}
+    }
+  },
+  "config": {
+    "example_setting": 5
+  },
+  "output": {
+    "evidence": "artifacts/",
+    "description": "What the verifier writes and what a caller should read to judge the run."
+  },
+  "runtime": {
+    "python": ">=3.12",
+    "requires_network": false
+  },
+  "dependencies": {
+    "python": ["stdlib only until you add a real adapter"],
+    "credential_env": []
+  },
+  "authorizations": [],
+  "resources": {
+    "keys": []
+  },
+  "stop": {
+    "grace_seconds": 3.0,
+    "release": "request_stop releases held inputs synchronously; resources_released=true is the only confirmation"
+  },
+  "verification": {
+    "independent": true,
+    "evidence": "artifacts/verification.json"
+  },
+  "scaffold": true
+}

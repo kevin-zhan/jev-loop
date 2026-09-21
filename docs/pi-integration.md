@@ -1,10 +1,18 @@
-# pi-jev: a managed host for Jev Loop
+# pi-jev: the optional pi client
 
 **English** | [简体中文](pi-integration.zh-CN.md)
 
+This document is about the **adapter**, not about the bundle format. The normative bundle contract is
+[spec/bundle-standard.md](../spec/bundle-standard.md); discovery, validation and the request protocol are
+identical here because the extension calls the same runtime as `jev-loop rpc` and the CLI. Read this page
+for pi-specific installation, cognition delivery and lifecycle wiring.
+
 `pi-jev` is the pi package shipped with this repository; it is not a pi fork. It runs project-local
 behavior bundles as separate processes, lets pi manage their lifecycle, and handles runtime cognition
-requests — the control loop does not wait for a single reply from the main agent.
+requests — the control loop does not wait for a single reply from the main agent. What pi adds over the
+plain CLI is convenience, not authority: it supplies the session id as `owner_id`, heartbeats, and
+delivers pending cognition jobs into the session. An agent outside pi does those three things itself
+(see [the jev-loop skill's lifecycle reference](../skills/jev-loop/references/lifecycle.md)).
 
 ```text
 pi session
@@ -43,14 +51,20 @@ pi -e https://github.com/kevin-zhan/jev-loop   # temporary try, without writing 
 
 Once installed, the package provides:
 
-- the `jev_loop` tool: `start / list / inspect / events / update / respond / stop / release_resources`;
-  `events` returns at most 500 entries per page and includes `next_seq`;
+- the `jev_loop` tool: `start / list / inspect / events / update / respond / stop / release_resources`,
+  plus `bundles` (list or validate a discovered bundle) and `validate_bundle`; `events` returns at most
+  500 entries per page and includes `next_seq`;
 - `/jev-runs`: the runs owned by the current session;
 - `/jev-self-test`: an offline acceptance run of the real process (keeps progressing while a cognition
   job is pending, releases inputs when stopped);
 - `/jev-stop-all`: stops all active runs of the current session after interactive confirmation;
-- the `pi-jev` skill: teaches the agent when to use the extension, how to handle cognition and how to
-  verify a run.
+- two skills: `jev-loop` (when to use a bundle, the request protocol, cognition and safe stop) and
+  `jev-bundle-creator` (authoring a bundle from a real template).
+
+The main skill was renamed from `pi-jev` to `jev-loop` when bundles became host-neutral, so an
+already-open session keeps the old command list until it runs `/reload` (or restarts pi). `pi-jev` now
+names only this optional package and extension; the `jev_loop` tool interface and `jev-loop-host rpc`
+are unchanged.
 
 ## Credentials for real Jev runs
 
@@ -85,22 +99,16 @@ Rules that apply to every bundle:
   writes `run_dir/artifacts/verification.json` and mirrors the verdict into the
   `controller.verification` snapshot that `inspect` returns.
 
-## Bundle manifest
+## Bundle references and the trust root
 
-The extension accepts only the built-in `diagnostic` bundle or a manifest inside the current trusted
-project directory. A manifest executes Python code, so it is an explicit project-code trust boundary,
-not a remote prompt.
+The extension accepts the built-in `diagnostic` bundle, a bundle name discovered in
+`<project>/.agents/jev-bundle/` (`project:<name>`, or a bare name), or a manifest path inside the
+current trusted project directory. Names are resolved by the Python runtime — the extension only
+pre-checks explicit paths so the error message is friendlier; the runtime is the authority. A manifest
+executes Python code, so it is an explicit project-code trust boundary, not a remote prompt.
 
-```json
-{
-  "schema_version": 1,
-  "entrypoint": "controller:build",
-  "python_path": ".",
-  "config": {"adapter": "project-specific settings"}
-}
-```
-
-The `entrypoint` factory signature is:
+The manifest format, its fields and what is enforced versus advisory are in
+[spec/bundle-standard.md](../spec/bundle-standard.md). The `entrypoint` factory signature is:
 
 ```python
 def build(spec: RunSpec, services: RuntimeServices, config: dict) -> ManagedController:
@@ -127,10 +135,12 @@ class ManagedController(Protocol):
 - `snapshot` carries only a bounded, JSON-serializable state summary; full evidence belongs in the run's
   `artifacts/`.
 
-An existing `Loop` can be hosted directly with `LoopController`; see
-[`examples/bundles/switchboard`](../examples/bundles/switchboard). The synchronous `Loop.step()` still
-executes one action at a time: if the environment must keep moving during a slow model call, the device
-driver/watchdog has to run on its own thread or process and the controller only coordinates it.
+An existing `Loop` can be hosted directly with `LoopController`; see the discoverable reference
+[`.agents/jev-bundle/offline-switchboard`](../.agents/jev-bundle/offline-switchboard) (manifest v2) and
+the legacy-format [`examples/bundles/switchboard`](../examples/bundles/switchboard). The synchronous
+`Loop.step()` still executes one action at a time: if the environment must keep moving during a slow
+model call, the device driver/watchdog has to run on its own thread or process and the controller only
+coordinates it.
 
 ## Runtime cognition
 
@@ -222,6 +232,8 @@ tokens or raw private data into events and snapshots.
 
 - No Xiaohongshu, browser, phone or game-site adapters; those have to be separately reviewed and
   accepted project bundles.
+- No authority over the bundle format: the extension does not define bundles, and a bundle never needs
+  pi to be created, discovered, validated or run.
 - The main agent is not turned into a button-press decision maker; button candidates are still chosen by
   the bundle's Jev policy.
 - No MCP server; crossing hosts requires an adapter layered over the same host API.

@@ -128,7 +128,8 @@ test("pi loads the package and its command reaches the Python host without a mod
     assert.ok(names.includes("jev-runs"));
     assert.ok(names.includes("jev-self-test"));
     assert.ok(names.includes("jev-stop-all"));
-    assert.ok(names.includes("skill:pi-jev"));
+    assert.ok(names.includes("skill:jev-loop"));
+    assert.ok(names.includes("skill:jev-bundle-creator"));
 
     rpc.send({ id: "runs", type: "prompt", message: "/jev-runs" });
     const accepted = await rpc.waitFor((event) => event.type === "response" && event.id === "runs");

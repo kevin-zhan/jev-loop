@@ -114,7 +114,20 @@ def test_bundle_manifest_is_checked_without_being_executed(monkeypatch, capsys):
     assert check["status"] == "ok"
 
 
-def test_broken_bundle_manifest_exits_three(monkeypatch, capsys, tmp_path):
+def test_an_unsupported_manifest_version_exits_three(monkeypatch, capsys, tmp_path):
+    manifest = tmp_path / "bundle.json"
+    manifest.write_text(json.dumps({"schema_version": 3, "entrypoint": "controller:build"}), encoding="utf-8")
+    monkeypatch.setenv("TYPESAFE_API_KEY", SENTINEL)
+    code, out, _ = run(capsys, ["--json", "--bundle", str(manifest)])
+
+    assert code == doctor.EXIT_CONFIG
+    payload = report(out)
+    check = next(check for check in payload["checks"] if check["name"] == "bundle")
+    assert check["status"] == "fail"
+    assert "unsupported schema_version 3" in check["detail"]
+
+
+def test_an_incomplete_standard_manifest_exits_three(monkeypatch, capsys, tmp_path):
     manifest = tmp_path / "bundle.json"
     manifest.write_text(json.dumps({"schema_version": 2, "entrypoint": "controller:build"}), encoding="utf-8")
     monkeypatch.setenv("TYPESAFE_API_KEY", SENTINEL)
@@ -124,6 +137,81 @@ def test_broken_bundle_manifest_exits_three(monkeypatch, capsys, tmp_path):
     payload = report(out)
     check = next(check for check in payload["checks"] if check["name"] == "bundle")
     assert check["status"] == "fail"
+    assert "missing required field" in check["detail"]
+
+
+def test_a_standard_manifest_is_accepted_and_names_its_version(monkeypatch, capsys):
+    manifest = REPO_ROOT / ".agents" / "jev-bundle" / "offline-switchboard" / "bundle.json"
+    monkeypatch.setenv("TYPESAFE_API_KEY", SENTINEL)
+    code, out, _ = run(capsys, ["--json", "--bundle", str(manifest)])
+
+    assert code == doctor.EXIT_OK
+    check = next(check for check in report(out)["checks"] if check["name"] == "bundle")
+    assert check["status"] == "ok"
+    assert "schema_version 2" in check["detail"]
+
+
+def test_a_bundle_name_is_resolved_in_the_working_project(monkeypatch, capsys):
+    monkeypatch.chdir(REPO_ROOT)
+    monkeypatch.setenv("TYPESAFE_API_KEY", SENTINEL)
+    code, out, _ = run(capsys, ["--json", "--bundle", "project:offline-switchboard"])
+
+    assert code == doctor.EXIT_OK
+    check = next(check for check in report(out)["checks"] if check["name"] == "bundle")
+    assert check["status"] == "ok"
+    assert "schema_version 2" in check["detail"]
+
+
+def test_a_legacy_manifest_with_a_missing_python_path_fails_the_preflight(monkeypatch, capsys, tmp_path):
+    """The base doctor failed this; the shared validator must keep failing it."""
+    manifest = tmp_path / "bundle.json"
+    manifest.write_text(
+        json.dumps({"schema_version": 1, "entrypoint": "controller:build", "python_path": "missing-dir"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TYPESAFE_API_KEY", SENTINEL)
+    code, out, _ = run(capsys, ["--json", "--bundle", str(manifest)])
+
+    assert code == doctor.EXIT_CONFIG
+    check = next(check for check in report(out)["checks"] if check["name"] == "bundle")
+    assert check["status"] == "fail"
+    assert "missing_python_path" in check["detail"]
+
+
+def test_a_legacy_manifest_with_a_present_python_path_still_passes(monkeypatch, capsys):
+    """The legacy layout keeps working; only the broken directory is refused."""
+    monkeypatch.setenv("TYPESAFE_API_KEY", SENTINEL)
+    code, out, _ = run(capsys, ["--json", "--bundle", str(EXAMPLE_MANIFEST)])
+    assert code == doctor.EXIT_OK
+    check = next(check for check in report(out)["checks"] if check["name"] == "bundle")
+    assert check["status"] == "ok"
+
+
+def test_a_scaffold_is_reported_as_not_startable(monkeypatch, capsys, tmp_path):
+    # A v2 manifest must live in a directory with the same name, however it is addressed.
+    directory = tmp_path / "doctor-scaffold"
+    directory.mkdir()
+    manifest = directory / "bundle.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "name": "doctor-scaffold",
+                "version": "0.1.0",
+                "description": "a scaffold",
+                "entrypoint": "bundle_controller:build",
+                "scaffold": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (directory / "BUNDLE.md").write_text("# scaffold\n", encoding="utf-8")
+    monkeypatch.setenv("TYPESAFE_API_KEY", SENTINEL)
+    code, out, _ = run(capsys, ["--json", "--bundle", str(manifest)])
+
+    check = next(check for check in report(out)["checks"] if check["name"] == "bundle")
+    assert check["status"] == "ok"
+    assert "scaffold=true" in check["detail"]
 
 
 def test_bundle_config_supplies_the_effective_values(monkeypatch, capsys, tmp_path):

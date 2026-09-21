@@ -1,7 +1,7 @@
 {
   "name": "pi-jev-loop",
   "version": "0.2.0",
-  "description": "Managed Jev Loop runtime bridge for pi: leases, event journal, exclusive resources, async cognition",
+  "description": "Managed Jev Loop runtime bridge for pi: leases, event journal, exclusive resources, async cognition (an optional client of the host-neutral bundle runtime)",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/kevin-zhan/jev-loop.git" },
   "homepage": "https://github.com/kevin-zhan/jev-loop#readme",
@@ -18,7 +18,8 @@
       "./extensions/pi-jev.ts"
     ],
     "skills": [
-      "./skills/pi-jev"
+      "./skills/jev-loop",
+      "./skills/jev-bundle-creator"
     ]
   },
   "peerDependencies": {

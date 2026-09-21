@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import secrets
 import signal
 import subprocess
@@ -20,8 +21,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..bundles.discovery import discover_bundles, discovery_root
+from ..bundles.manifest import ManifestError
+from ..bundles.resolve import BundleRefError, ResolvedBundle, resolve_bundle_ref
+from ..bundles.validate import validate_ref, validate_resolved
+from ..schema import SchemaValidationError, validate_value
 from .events import ManagedEventKind
-from .runtime import CognitionBroker, CognitionError, RuntimeServices, load_controller
+from .runtime import CognitionBroker, CognitionError, RuntimeServices, load_controller, load_manifest_for_run
 from .store import ManagedRecorder, atomic_write_json, load_events, load_status
 from .types import ControllerResult, ManagedStatus, RunSpec
 
@@ -58,9 +64,73 @@ def dispatch(request: Mapping[str, Json], *, home: Path | None = None) -> dict[s
         )
     if action == "release_resources":
         return confirm_resources_released(root, request)
+    if action == "bundle_list":
+        return list_bundles(root, request)
+    if action == "bundle_show":
+        return show_bundle(root, request)
+    if action == "bundle_validate":
+        return validate_bundle(root, request)
     if action in {"heartbeat", "update", "stop", "respond"}:
         return send_command(root, request)
-    raise ValueError(f"unknown host action {action!r}")
+    raise ValueError(f"unknown host action {_echo_action(action)}")
+
+
+def _echo_action(action: str) -> str:
+    """Name a malformed action only when it looks like an action; never echo arbitrary input."""
+    if re.fullmatch(r"[a-z][a-z0-9_]{0,32}", action):
+        return repr(action)
+    return "(unrecognised)"
+
+
+def bundle_project_root(request: Mapping[str, Json]) -> Path:
+    """Read-only bundle actions describe one explicit project; they never guess one."""
+    project_root = Path(_required_string(request, "project_root")).expanduser().resolve()
+    if not project_root.is_dir():
+        raise ValueError(f"project_root is not a directory: {project_root}")
+    return project_root
+
+
+def list_bundles(home: Path, request: Mapping[str, Json]) -> dict[str, Json]:
+    """List the bundles discovered in a project.  Reads manifests, executes nothing."""
+    project_root = bundle_project_root(request)
+    entries = discover_bundles(project_root)
+    return {
+        "ok": True,
+        "project_root": str(project_root),
+        "discovery_root": str(discovery_root(project_root)),
+        "bundles": [entry.to_json() for entry in entries],
+        "valid": sorted(entry.name for entry in entries if entry.valid),
+        "unusable": sorted(entry.name for entry in entries if not entry.valid),
+    }
+
+
+def show_bundle(home: Path, request: Mapping[str, Json]) -> dict[str, Json]:
+    project_root = bundle_project_root(request)
+    reference = str(request.get("bundle") or "")
+    resolved = _resolve_bundle(reference, project_root)
+    report = validate_ref(reference, project_root)
+    return {
+        "ok": True,
+        "bundle": resolved.to_json(),
+        "warnings": report["warnings"],
+        "advisory": report["advisory"],
+        "not_checked": report["not_checked"],
+    }
+
+
+def validate_bundle(home: Path, request: Mapping[str, Json]) -> dict[str, Json]:
+    """Static validation only: no import, no execution, no dependency install, no network.
+
+    Three separate fields, three separate meanings:
+
+    - ``ok``: the request was processed (transport/request layer).
+    - ``validation_ok``: the bundle passed the static contract.
+    - ``validation.ok``: the verdict of the full report, alongside errors/warnings/advisory.
+    """
+    project_root = bundle_project_root(request)
+    reference = str(request.get("bundle") or "")
+    report = validate_ref(reference, project_root)
+    return {"ok": True, "validation_ok": bool(report["ok"]), "validation": report}
 
 
 def start_run(home: Path, request: Mapping[str, Json]) -> dict[str, Json]:
@@ -69,7 +139,8 @@ def start_run(home: Path, request: Mapping[str, Json]) -> dict[str, Json]:
     project_root = Path(_required_string(request, "project_root")).expanduser().resolve()
     if not project_root.is_dir():
         raise ValueError(f"project_root is not a directory: {project_root}")
-    bundle = _validate_bundle(str(request.get("bundle") or ""), project_root)
+    bundle = _resolve_bundle(str(request.get("bundle") or ""), project_root)
+    _enforce_static_contract(bundle)
     task = dict(request.get("task") or {})
     resource_keys = _validate_resource_keys(request.get("resource_keys") or ())
     goal = task.get("goal")
@@ -80,9 +151,20 @@ def start_run(home: Path, request: Mapping[str, Json]) -> dict[str, Json]:
     lease_seconds = None if detached else _bounded_float(request.get("lease_seconds", 30), 10, 300, "lease_seconds")
     max_runtime = _bounded_float(request.get("max_runtime_seconds", 300), 1, 86_400, "max_runtime_seconds")
     stop_grace = _bounded_float(request.get("stop_grace_seconds", 3), 0.1, 30, "stop_grace_seconds")
-    bundle_config = dict(request.get("bundle_config") or {})
+    allow_scaffold = _optional_boolean(request, "allow_scaffold")
+    raw_bundle_config = request.get("bundle_config", _ABSENT)
+    bundle_config = dict(raw_bundle_config) if isinstance(raw_bundle_config, Mapping) else {}
     _json_value(task, label="task", maximum=200_000)
     _json_value(bundle_config, label="bundle_config", maximum=100_000)
+    # A declared contract is enforced before any resource claim or run directory exists.
+    _enforce_declared_contract(
+        bundle,
+        task=task,
+        bundle_config=bundle_config,
+        raw_bundle_config=raw_bundle_config,
+        allow_scaffold=allow_scaffold,
+    )
+    bundle_path = str(bundle.manifest_path) if bundle.manifest_path is not None else "diagnostic"
 
     _secure_dir(home)
     runs_dir = home / "runs"
@@ -112,7 +194,7 @@ def start_run(home: Path, request: Mapping[str, Json]) -> dict[str, Json]:
             run_id=run_id,
             owner_id=owner_id,
             project_root=str(project_root),
-            bundle=bundle,
+            bundle=bundle_path,
             task=task,
             resource_keys=resource_keys,
             detached=detached,
@@ -129,7 +211,10 @@ def start_run(home: Path, request: Mapping[str, Json]) -> dict[str, Json]:
                 "run_id": run_id,
                 "owner_id": owner_id,
                 "project_root": str(project_root),
-                "bundle": bundle,
+                "bundle": bundle_path,
+                "bundle_name": bundle.name,
+                "bundle_format": _bundle_format(bundle),
+                "bundle_scaffold": bundle.scaffold,
                 "task": task,
                 "resource_keys": list(resource_keys),
                 "detached": detached,
@@ -368,6 +453,10 @@ def run_worker(run_dir: Path) -> int:
     recorder = ManagedRecorder.open(run_dir)
     if recorder.state.status is not ManagedStatus.STARTING:
         return 2  # managed runs are never implicitly replayed or reactivated
+    try:
+        manifest = load_manifest_for_run(spec)
+    except ManifestError:
+        manifest = None  # load_controller reports the unreadable manifest as a load failure
     recorder.emit(ManagedEventKind.WORKER_STARTED, {"pid": os.getpid()})
     changed = threading.Event()
     cognition = CognitionBroker(recorder, changed)
@@ -457,7 +546,7 @@ def run_worker(run_dir: Path) -> int:
         while True:
             now = time.time()
             monotonic_now = time.monotonic()
-            _process_commands(run_dir, spec, recorder, cognition, controller, ask_to_stop)
+            _process_commands(run_dir, spec, recorder, cognition, controller, ask_to_stop, manifest)
             cognition.expire_due(now=now)
 
             state = recorder.state
@@ -547,7 +636,7 @@ def run_worker(run_dir: Path) -> int:
             _release_resource_claims(run_dir.parent.parent, spec.run_id, spec.resource_keys)
 
 
-def _process_commands(run_dir, spec, recorder, cognition, controller, ask_to_stop) -> None:
+def _process_commands(run_dir, spec, recorder, cognition, controller, ask_to_stop, manifest=None) -> None:
     for command_path in sorted((run_dir / "inbox").glob("*.json")):
         command_id = command_path.stem.split("-")[-1]
         ack_path = run_dir / "acks" / f"{command_id}.json"
@@ -571,6 +660,7 @@ def _process_commands(run_dir, spec, recorder, cognition, controller, ask_to_sto
                     )
                 patch = dict(command.get("task_patch") or {})
                 _validate_task_patch(patch)
+                _validate_declared_task_patch(manifest, patch)
                 next_task = {**recorder.state.task, **patch}
                 controller.update(next_task, patch)  # validate/accept before committing the event
                 recorder.emit(ManagedEventKind.TASK_UPDATED, {"task": patch})
@@ -643,20 +733,165 @@ def _wait_for_idempotent_start(
     raise TimeoutError(f"idempotent start did not become readable: {last_error or mapping_path}")
 
 
-def _validate_bundle(bundle: str, project_root: Path) -> str:
-    if bundle == "diagnostic":
-        return bundle
+def _resolve_bundle(bundle: str, project_root: Path) -> ResolvedBundle:
+    """Resolve one bundle reference, re-checking the trust root for every form.
+
+    The shared resolver understands the built-in ``diagnostic`` bundle, a discovered
+    ``.agents/jev-bundle/<name>`` name (``project:<name>`` or a bare name) and the legacy
+    in-project manifest path.  Name resolution never reaches outside the explicit project
+    root, and a manifest v2 ``python_path`` must stay inside its own bundle directory.
+    """
     if not bundle:
-        raise ValueError("bundle is required (use 'diagnostic' only for the built-in contract probe)")
-    path = Path(bundle)
-    if not path.is_absolute():
-        path = project_root / path
-    path = path.resolve()
-    if not path.is_relative_to(project_root):
-        raise ValueError("bundle manifest must be inside project_root")
-    if not path.is_file():
-        raise ValueError(f"bundle manifest does not exist: {path}")
-    return str(path)
+        raise ValueError(
+            "bundle is required: use 'diagnostic' only for the built-in contract probe, a bundle name "
+            "discovered in <project_root>/.agents/jev-bundle/, or a manifest path inside project_root"
+        )
+    try:
+        return resolve_bundle_ref(bundle, project_root)
+    except BundleRefError as error:
+        raise ValueError(str(error)) from error
+
+
+def _enforce_static_contract(bundle: ResolvedBundle) -> None:
+    """Refuse a start whose bundle fails the same static contract ``bundle validate`` reports.
+
+    One gate, one implementation: this reuses the resolution the host already performed (so a
+    start and a validation can never disagree) and runs before any run directory, journal,
+    resource claim or worker exists.  It never imports the bundle.  Warning-level and advisory
+    findings are not errors here — only the error list stops a start.
+    """
+    report = validate_resolved(bundle)
+    if report["ok"]:
+        return
+    first = report["errors"][0]
+    raise ValueError(
+        f"bundle {bundle.ref!r} fails static validation ({first['code']}: {first['detail']}); "
+        "run 'jev-loop bundle validate' for the full report"
+    )
+
+
+def _bundle_format(bundle: ResolvedBundle) -> str:
+    if bundle.is_diagnostic:
+        return "builtin"
+    if bundle.is_standard:
+        return "manifest_v2"
+    return "legacy_manifest_v1"
+
+
+_ABSENT = object()
+
+
+def _optional_boolean(request: Mapping[str, Json], key: str, *, default: bool = False) -> bool:
+    """Read an opt-in flag that must be a real JSON boolean.
+
+    A truthy string (``"false"``), an integer (``1``) or a float must not be able to authorize
+    anything: only the literal ``true`` opts in, and any other present value is refused.
+    """
+    if key not in request:
+        return default
+    value = request[key]
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be a JSON boolean (true or false), not {_type_name(value)}")
+    return value
+
+
+def _type_name(value: Json) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, Mapping):
+        return "object"
+    return type(value).__name__
+
+
+def _enforce_declared_contract(
+    bundle: ResolvedBundle,
+    *,
+    task: Mapping[str, Json],
+    bundle_config: Mapping[str, Json],
+    raw_bundle_config: Json = _ABSENT,
+    allow_scaffold: bool,
+) -> None:
+    """Enforce what a manifest v2 bundle actually declares, before a run exists.
+
+    Only declared schemas are checked; legacy manifests and the built-in diagnostic bundle
+    keep their previous behaviour.  Nothing here imports the bundle.
+    """
+    manifest = bundle.manifest
+    if manifest is None:
+        return
+    if manifest.scaffold and not allow_scaffold:
+        raise ValueError(
+            f"bundle {manifest.name!r} declares scaffold=true and is refused by default: it only demonstrates "
+            "the plumbing, never a user task. Implement and verify it, then set scaffold to false; "
+            "pass allow_scaffold=true only for an explicit plumbing check."
+        )
+    if not manifest.is_standard:
+        if raw_bundle_config is not _ABSENT and not isinstance(raw_bundle_config, Mapping):
+            # Legacy semantics keep treating a falsy value as "no overrides", but a truthy
+            # non-object used to fail with an internal TypeError; report it clearly instead.
+            if raw_bundle_config:
+                raise ValueError(f"bundle_config must be a JSON object, not {_type_name(raw_bundle_config)}")
+        return
+    # A standard bundle's declared types are enforced as declared: present means present.
+    if raw_bundle_config is not _ABSENT and not isinstance(raw_bundle_config, Mapping):
+        raise ValueError(f"bundle_config must be a JSON object when present, not {_type_name(raw_bundle_config)}")
+    if manifest.inputs_schema is not None:
+        inputs = task.get("inputs", _ABSENT)
+        if inputs is _ABSENT:
+            inputs = {}  # omitted inputs default to an empty object
+        elif not isinstance(inputs, Mapping):
+            # An explicit null (or any non-object) is a declared-type violation, exactly as it is
+            # on the update path; it is never normalised into {}.
+            raise ValueError(
+                f"task.inputs must be a JSON object when the bundle declares inputs_schema, "
+                f"not {_type_name(inputs)}"
+            )
+        _ensure_json_size(dict(inputs), label="task.inputs", maximum=200_000)
+        try:
+            validate_value(dict(inputs), manifest.inputs_schema, path="task.inputs")
+        except SchemaValidationError as error:
+            raise ValueError(f"task.inputs does not match the bundle's inputs_schema: {error}") from error
+    if manifest.config_schema is not None:
+        merged = {**dict(manifest.config), **dict(bundle_config)}
+        try:
+            validate_value(merged, manifest.config_schema, path="bundle_config")
+        except SchemaValidationError as error:
+            raise ValueError(f"bundle_config does not match the bundle's config_schema: {error}") from error
+
+
+def _validate_declared_task_patch(manifest, patch: Mapping[str, Json]) -> None:
+    """A task update must not bypass the contract the run was started under."""
+    if manifest is None or not manifest.is_standard or "inputs" not in patch:
+        return
+    if manifest.inputs_schema is None:
+        return
+    inputs = patch["inputs"]
+    if not isinstance(inputs, Mapping):
+        raise ValueError("task update inputs must be a JSON object when the bundle declares inputs_schema")
+    _ensure_json_size(dict(inputs), label="task update inputs", maximum=200_000)
+    try:
+        validate_value(dict(inputs), manifest.inputs_schema, path="task.inputs")
+    except SchemaValidationError as error:
+        raise ValueError(f"task update rejected: task.inputs does not match inputs_schema: {error}") from error
+
+
+def _ensure_json_size(value: Json, *, label: str, maximum: int) -> None:
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True).encode()
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{label} is not JSON-serializable: {error}") from error
+    if len(encoded) > maximum:
+        raise ValueError(f"{label} is {len(encoded)} bytes, over limit {maximum}")
 
 
 def _validate_resource_keys(raw: Json) -> tuple[str, ...]:

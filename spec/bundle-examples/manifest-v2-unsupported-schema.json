@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "name": "example-notes",
+  "version": "0.3.1",
+  "description": "Example manifest used by the specification drift tests.",
+  "entrypoint": "bundle_controller:build",
+  "inputs_schema": {
+    "oneOf": [
+      {
+        "type": "string"
+      }
+    ]
+  }
+}

@@ -12,8 +12,13 @@ Jev 选出下一步，执行，用实际观测到的结果更新状态，然后�
 agent 推理回合。
 
 循环、执行与停止条件仍归代码所有——模型只在一个明确给出的候选集里选下一步，每个周期都有界、可回放、
-可验证。可选的 [pi](https://github.com/earendil-works/pi) 集成（pi-jev）把合适的项目 bundle 放进
-独立 worker，主 agent 推理时环境可以继续运动。
+可验证。
+
+**bundle** 是环境相关的那一半：`<project_root>/.agents/jev-bundle/<name>/` 下的目录，声明它驱动什么、
+需要什么、如何被验证。bundle 是与宿主无关的标准，并配有 CLI——任何有 shell 的 agent 都能创建、发现、
+检视、校验并运行它；[Jev Bundle 规范（manifest v2）](spec/bundle-standard.zh-CN.md) 是规范性契约。
+可选的 [pi](https://github.com/earendil-works/pi) 集成（pi-jev）只是同一运行时的客户端之一，主 agent
+推理时环境可以继续运动。
 
 [^latency]: 延迟说明：公开示例项目
     [`browser-use/jev-ultrafast`](https://github.com/browser-use/jev-ultrafast/blob/1231850a0bf1a0c0341fe408ef1668dbbfdfac46/docs/flights-measurement.json)
@@ -74,18 +79,28 @@ task state → Jev decision → action → observed state update → next decisi
 
 本仓目前实际包含什么：
 
+- **Jev Bundle 规范（manifest v2）与其 CLI**：`jev-loop bundle list / show / validate / init /
+  conformance` 以及 `jev-loop rpc`——无需 pi、无需任何 agent 专属胶水，即可发现、检视、校验、生成
+  脚手架并运行 bundle。`jev-loop-host` 保持兼容不变。
+- [`.agents/jev-bundle/offline-switchboard`](.agents/jev-bundle/offline-switchboard)——可发现、离线的
+  参考 bundle：真实的 manifest v2、独立 verifier，以及在进程内运行内核的作者测试。
+- 两个 Agent Skill：[`skills/jev-bundle-creator`](skills/jev-bundle-creator) 用真实模板编写 bundle，
+  [`skills/jev-loop`](skills/jev-loop) 负责发现、校验与运行。
 - `uv run jev-loop-demo` 三个场景（`clean`、`noop`、`cycle`）——用确定性 mock 环境演示内核语义，
   不联网、不调用模型。
-- `uv run jev-loop-doctor`——本地 Jev 配置的离线预检：不发起网络请求，也不打印凭据值。
+- `uv run jev-loop-doctor`——本地 Jev 配置的离线预检：不发起网络请求，也不打印凭据值；
+  `--bundle <ref>` 还会检查 bundle 的 manifest 契约。
 - [`examples/live-files`](examples/live-files)——可直接运行的真实参考用例：真实 Jev 决策请求、带
   合成内容的本机文件系统环境，以及独立 verifier。
-- [`examples/bundles/switchboard`](examples/bundles/switchboard)——一个很小的 bundle，通过 pi-jev 跑
-  内核；是你自己 bundle 的模板，不是业务适配器。
+- [`examples/bundles/switchboard`](examples/bundles/switchboard)——一个很小的 legacy 格式 bundle，
+  通过托管宿主跑内核；是你自己 bundle 的模板，不是业务适配器。
 - 内建 `diagnostic` bundle——只证明桥接语义（cognition pending 时继续推进、停止时释放输入），
   永远不能作为用户任务完成的证据。
 
 本仓不包含什么：浏览器、手机、游戏或站点适配器，也没有通用 MCP server。如果你的环境需要其中之一，
-你要自己实现并验收一个项目 bundle，见 [docs/pi-integration.zh-CN.md](docs/pi-integration.zh-CN.md)。
+你要自己实现并验收一个项目 bundle，见 [spec/bundle-standard.zh-CN.md](spec/bundle-standard.zh-CN.md)
+与 [docs/bundle-authoring.zh-CN.md](docs/bundle-authoring.zh-CN.md)。本仓不声称任何第三方产品已经实现
+该 bundle 格式：采用它意味着加载对应 skill 或直接驱动 CLI。
 
 ### 一个真实集成案例（独立项目）
 
@@ -128,9 +143,44 @@ python3 -m venv .venv
 ./.venv/bin/jev-loop-demo --scenario clean
 ```
 
+发现并校验本仓自带的 bundle（离线、不需要 key、不联网）：
+
+```sh
+uv run jev-loop bundle list
+uv run jev-loop bundle show project:offline-switchboard
+uv run jev-loop bundle conformance project:offline-switchboard --run-tests
+```
+
 ## 接入方式
 
-### A. 作为 Python 库
+### A. 用标准 CLI 编写并运行 bundle（任何 agent，无需 pi）
+
+bundle 位于 `<project_root>/.agents/jev-bundle/<name>/`，包含 `bundle.json` 契约与给运行它的 agent
+读的 `BUNDLE.md`。以下全部与宿主无关：只需要 Python 3.12+ 和一个 shell，不需要 pi，也不绑定任何
+特定 agent 产品。
+
+```sh
+jev-loop bundle init review-notes --description "整理待审阅收件箱"   # 生成真实脚手架
+jev-loop bundle validate project:review-notes                        # 静态契约
+jev-loop bundle conformance project:review-notes --run-tests         # 加发现过程惰性证明
+```
+
+生成的脚手架是明确未完成的：`scaffold: true` 会让 host 拒绝启动，直到你实现 controller 与独立
+verifier 并把 `scaffold` 改成 `false`。运行 bundle 用的是宿主一贯的「一请求一响应」协议：
+
+```sh
+printf '%s' '{"action":"start","owner_id":"my-session","idempotency_key":"task-1",
+  "project_root":"'"$PWD"'","bundle":"project:review-notes",
+  "task":{"goal":"整理今天的待审阅收件箱"},"max_runtime_seconds":600}' | jev-loop rpc
+```
+
+之后用 `inspect`、`events`、`heartbeat`、`respond`（cognition）与 `stop`。CLI 不会替你发心跳或通知；
+pi 之外的 agent 具体要做什么见 `skills/jev-loop/references/lifecycle.md`。规范契约：
+[spec/bundle-standard.zh-CN.md](spec/bundle-standard.zh-CN.md)；编写指南：
+[docs/bundle-authoring.zh-CN.md](docs/bundle-authoring.zh-CN.md)；完整示例：
+[`.agents/jev-bundle/offline-switchboard`](.agents/jev-bundle/offline-switchboard)。
+
+### B. 作为 Python 库
 
 ```python
 from jev_loop import Loop, TaskSpec
@@ -158,9 +208,13 @@ print(result.status, result.stop_reason)
 （经由可注入的 `request_fn`，所以测试保持离线）。内核入口与 ports 从 `jev_loop` 导出；
 完整走查示例见 [docs/getting-started.zh-CN.html](docs/getting-started.zh-CN.html)。
 
-### B. 在 pi 里用，配合项目 bundle
+### C. 在 pi 里用，配合项目 bundle（可选客户端）
 
-仓库根本身就是一个 pi package（`package.json` 声明了 `extensions/pi-jev.ts` 与 `skills/pi-jev`）。请按 pi 的官方安装说明安装 pi（见 [pi 仓库](https://github.com/earendil-works/pi)），并确认系统里有 Python 3.12+：
+仓库根本身就是一个 pi package（`package.json` 声明了 `extensions/pi-jev.ts` 以及
+`skills/jev-loop`、`skills/jev-bundle-creator` 两个 skill）。pi 是同一运行时的可选客户端：扩展会提供
+会话 id 作为 `owner_id`、发送心跳并投递 cognition 任务——这正是 pi 之外的 agent 用 `jev-loop rpc`
+自己完成的部分。请按 pi 的官方安装说明安装 pi（见 [pi 仓库](https://github.com/earendil-works/pi)），
+并确认系统里有 Python 3.12+：
 
 ```sh
 git clone https://github.com/kevin-zhan/jev-loop.git   # 需要访问权限
@@ -171,25 +225,26 @@ pi install .            # 把本地 package 注册进 pi（就地引用这个克
 ```
 
 之后在已打开的会话里执行 `/reload`。该 package 提供 `jev_loop` 工具
-（`start / list / inspect / events / update / respond / stop / release_resources`）、`/jev-runs`、
-`/jev-self-test`、`/jev-stop-all` 以及 `pi-jev` skill。扩展默认调用 `python3`
-（用 `JEV_LOOP_PYTHON` 覆盖），并把本包 `src/` 加进 worker 的 `PYTHONPATH`，因此不需要把 Python 包
-装到全局环境。
+（`start / list / inspect / events / update / respond / stop / release_resources / bundles /
+validate_bundle`）、`/jev-runs`、`/jev-self-test`、`/jev-stop-all` 以及两个 skill。扩展默认调用
+`python3`（用 `JEV_LOOP_PYTHON` 覆盖），并把本包 `src/` 加进 worker 的 `PYTHONPATH`，因此不需要把
+Python 包装到全局环境。
 
-bundle manifest、controller 契约、运行中 cognition、生命周期与安全语义：
-[docs/pi-integration.zh-CN.md](docs/pi-integration.zh-CN.md)。
+由于两者调用同一套运行时，发现、校验与信任根与路径 A 完全一致。pi 适配器自身的细节（安装、
+cognition 投递、生命周期与安全语义）见 [docs/pi-integration.zh-CN.md](docs/pi-integration.zh-CN.md)。
 
-### C. 接你自己的宿主
+### D. 接你自己的宿主
 
-不依赖 pi。环境同步好后，`uv run jev-loop-host rpc` 从 stdin 读一个 JSON 请求、往 stdout 写一个 JSON
-回应（`start / list / inspect / events / heartbeat / update / stop / respond / release_resources`）；
-宿主 API 从 `jev_loop.host` 导出。JSON 是长什么样的完整示例见
+不依赖 pi。环境同步好后，`uv run jev-loop-host rpc`（或 `uv run jev-loop rpc`）从 stdin 读一个 JSON
+请求、往 stdout 写一个 JSON 回应（`start / list / inspect / events / heartbeat / update / stop /
+respond / release_resources / bundle_list / bundle_show / bundle_validate`）；宿主 API 从
+`jev_loop.host` 导出。JSON 是长什么样的完整示例见
 [docs/getting-started.zh-CN.html](docs/getting-started.zh-CN.html)。
 
 ## 接入真实 Jev 服务
 
 快速开始 demo 与默认测试套件均离线，不调用付费 API。真实 run 需要由**你自己提供** TypeSafe / Jev API
-key；本仓提供的是受支持的配置入口、离线预检与可运行的 reference bundle。上文路径 A 的代码是你自己
+key；本仓提供的是受支持的配置入口、离线预检与可运行的 reference bundle。上文路径 B 的代码是你自己
 搭建集成的示意，它发出的真实请求属于你的付费调用。
 
 ### 凭据
@@ -318,14 +373,22 @@ pi 侧配置：pi 支持 `/login openrouter` 与 `OPENROUTER_API_KEY` 变量（�
   最多一个活动 owner；重叠的 claim 会冲突。
 - **适配器由你负责。** 本仓的 mock 环境是测试替身。真实适配器必须自己证明：观测里包含它所有前置
   条件与 verifier 需要的字段。
-- **bundle manifest 是代码。** manifest 会以你的权限加载项目代码，只运行可信项目根目录内经审查的
-  manifest。运行时 cognition 上下文是不可信数据，不是用户授权。
+- **bundle manifest 是代码。** manifest 会在 worker 里以你的权限加载项目代码；只运行可信项目根目录
+  内经审查的 bundle。发现与校验是惰性的（不 import、不执行、不装依赖、不联网），但运行 bundle 不是
+  沙箱。运行时 cognition 上下文是不可信数据，不是用户授权；bundle 自身的文本也从来不是权限。
+- **脚手架与 diagnostic 探针都不是结果。** `scaffold: true` 默认被拒绝，且只证明管路；内建
+  `diagnostic` bundle 只探测桥接语义。
+- **建议性元数据只是建议。** 声明的 authorizations、资源期望、依赖、停机意图与验证意图会被如实记录
+  并打印；它们不授予、不声明、也不保证任何东西。`jev-loop bundle validate` 会分别标注强制项、
+  建议声明与未检查项。
 - **停止是两阶段的。** `accepted` 不代表输入已释放；需要 terminal status 加 `resources_released=true`，
   真实设备还必须有进程外 watchdog。
 - **活着不等于成功。** 进程还在、诊断绿灯，都不能说明任务完成；只有 bundle 的 verifier 证据加
   terminal run status 可以。
-- **内核是同步的，worker 不是。** `Loop.step()` 一次执行一个动作；pi-jev 的 managed host 能在
-  cognition job pending 时让环境继续运动——这不是把同步内核改造成了异步内核。
+- **内核是同步的，worker 不是。** `Loop.step()` 一次执行一个动作；managed host 能在 cognition job
+  pending 时让环境继续运动——这不是把同步内核改造成了异步内核。
+- **bundle 标准与宿主无关，但不等于已经普及。** 任何有 shell 和 CLI 的 agent 都能使用，skill 会教
+  怎么做；本仓不声称任何第三方产品原生支持该格式。
 - **仅源码分发。** 没有发布到 PyPI 或 npm；除 `pyproject.toml` 与 `package.json` 里的版本号字段外
   没有版本 tag。
 
@@ -333,8 +396,11 @@ pi 侧配置：pi 支持 `/login openrouter` 与 `OPENROUTER_API_KEY` 变量（�
 
 | 文档 | English | 简体中文 |
 |---|---|---|
+| Jev Bundle 规范（manifest v2）——规范性 | [bundle-standard.md](spec/bundle-standard.md) | [bundle-standard.zh-CN.md](spec/bundle-standard.zh-CN.md) |
+| manifest v2 JSON Schema（机器可读） | [bundle-manifest-v2.schema.json](spec/bundle-manifest-v2.schema.json) | — |
+| 编写 bundle（模板、离线测试、conformance） | [bundle-authoring.md](docs/bundle-authoring.md) | [bundle-authoring.zh-CN.md](docs/bundle-authoring.zh-CN.md) |
 | 外部工程师上手说明（三条路径、bundle 契约、安全、常见坑） | [getting-started.html](docs/getting-started.html) | [getting-started.zh-CN.html](docs/getting-started.zh-CN.html) |
-| pi 集成与 bundle 契约 | [pi-integration.md](docs/pi-integration.md) | [pi-integration.zh-CN.md](docs/pi-integration.zh-CN.md) |
+| pi 适配器（可选客户端） | [pi-integration.md](docs/pi-integration.md) | [pi-integration.zh-CN.md](docs/pi-integration.zh-CN.md) |
 | 内核不变量与守卫表 | [design.md](docs/design.md) | [design.zh-CN.md](docs/design.zh-CN.md) |
 | Question 传输格式规范（v0.1），设计/规范文档 | [questions.md](spec/questions.md) | [questions.zh-CN.md](spec/questions.zh-CN.md) |
 | State 传输格式规范（v0.1），设计/规范文档 | [state.md](spec/state.md) | [state.zh-CN.md](spec/state.zh-CN.md) |

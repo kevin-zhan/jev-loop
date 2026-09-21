@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kevin-zhan/jev-loop/spec/bundle-manifest-v2.schema.json",
+  "title": "Jev Bundle Specification — manifest v2",
+  "description": "Machine-readable description of .agents/jev-bundle/<name>/bundle.json with schema_version 2. The runtime validator in src/jev_loop/bundles/manifest.py is the authority, and tests/test_bundle_manifest_schema.py checks with a real Draft 2020-12 validator that the two descriptions agree on the shipped corpus and on a generated per-field matrix in spec/bundle-examples/. They are not fully equivalent, and the difference is listed rather than claimed away. This schema cannot express: that the manifest must be a regular file of at most 256 KiB read with a bound and valid UTF-8 JSON; that nesting depth is limited to 16 levels; that the manifest's directory name must equal name and BUNDLE.md must exist next to it inside the bundle; that python_path must exist and resolve inside the bundle directory; that declared contract schemas are validated as closed definitions with cross-field bound rules; that declared config defaults are cross-checked against config_schema; that the bundle directory is scanned for unrendered template tokens; and the lexical integer-token rule, because JSON has a single number type while the runtime requires an integer token for schema_version and for integer bounds (schema_version 2.0 and minItems 1.0 are accepted by this schema and refused by the runtime). Present optional metadata must have its declared non-null type: an explicit null is rejected here and by the runtime, while omitting the field stays valid.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "name",
+    "version",
+    "description",
+    "entrypoint"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]([a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$",
+      "description": "Must equal the bundle directory name.",
+      "not": {
+        "pattern": "[^a-z0-9-]"
+      }
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]*$",
+      "not": {
+        "pattern": "[^0-9A-Za-z.+_-]"
+      }
+    },
+    "description": {
+      "$ref": "#/$defs/proseText"
+    },
+    "when_to_use": {
+      "$ref": "#/$defs/proseText"
+    },
+    "entrypoint": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "module:function. Only this shape is enforced; python_path bounds the extra import search path rather than confining imports, and whether the module exists, where it is imported from and the factory's return type are not checked statically.",
+      "not": {
+        "pattern": "[^A-Za-z0-9_.:]"
+      }
+    },
+    "python_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Relative to the bundle directory; for schema_version 2 it must resolve inside the bundle directory.",
+      "not": {
+        "pattern": "^\\s|\\s$"
+      }
+    },
+    "config": {
+      "type": "object",
+      "description": "Default config passed to the factory as {**config, **bundle_config}."
+    },
+    "inputs_schema": {
+      "$ref": "#/$defs/contractSchema",
+      "description": "Checked against task.inputs before a run is created, and against an inputs update."
+    },
+    "config_schema": {
+      "$ref": "#/$defs/contractSchema",
+      "description": "Checked against the merged config before a run is created."
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "$ref": "#/$defs/contractSchema"
+        },
+        "evidence": {
+          "$ref": "#/$defs/proseText"
+        },
+        "description": {
+          "$ref": "#/$defs/proseText"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "python": {
+          "$ref": "#/$defs/proseText"
+        },
+        "profile": {
+          "$ref": "#/$defs/proseText"
+        },
+        "requires_network": {
+          "type": "boolean"
+        },
+        "notes": {
+          "$ref": "#/$defs/proseText"
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "python": {
+          "$ref": "#/$defs/proseList"
+        },
+        "system": {
+          "$ref": "#/$defs/proseList"
+        },
+        "credential_env": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{0,127}$",
+            "not": {
+              "pattern": "\\s"
+            },
+            "description": "An environment variable name only: uppercase letters, digits and underscores, starting with a letter, and no whitespace at all (a trailing newline is rejected here exactly as the runtime rejects it). The value itself is never echoed by a diagnostic."
+          },
+          "description": "Environment variable names only. Never a value, never a file path."
+        }
+      }
+    },
+    "authorizations": {
+      "$ref": "#/$defs/proseList"
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keys": {
+          "$ref": "#/$defs/proseList"
+        },
+        "exclusive": {
+          "type": "boolean"
+        },
+        "notes": {
+          "$ref": "#/$defs/proseText"
+        }
+      },
+      "description": "Advisory expectation. The run's real claims come from the caller's resource_keys."
+    },
+    "stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "grace_seconds": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 30
+        },
+        "release": {
+          "$ref": "#/$defs/proseText"
+        },
+        "notes": {
+          "$ref": "#/$defs/proseText"
+        }
+      },
+      "description": "Advisory intent. The enforced bound is the run's stop_grace_seconds."
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "independent": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "$ref": "#/$defs/proseText"
+        },
+        "notes": {
+          "$ref": "#/$defs/proseText"
+        }
+      },
+      "description": "Advisory intent. This report does not establish that the verifier is independent."
+    },
+    "scaffold": {
+      "type": "boolean",
+      "description": "true marks an unfinished generated scaffold; the host refuses to start it by default."
+    }
+  },
+  "$defs": {
+    "contractSchema": {
+      "type": "object",
+      "description": "A schema inside the service's closed subset: type, enum, const, required, properties, additionalProperties (literal false only), items, minItems, maxItems, minLength, maxLength, minimum, maximum. Unsupported keywords are rejected instead of ignored.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "oneOf": [
+            {
+              "enum": [
+                "null",
+                "boolean",
+                "integer",
+                "number",
+                "string",
+                "array",
+                "object"
+              ]
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "null",
+                  "boolean",
+                  "integer",
+                  "number",
+                  "string",
+                  "array",
+                  "object"
+                ]
+              }
+            }
+          ]
+        },
+        "enum": {
+          "type": "array",
+          "minItems": 1
+        },
+        "const": {},
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "properties": {
+          "type": "object",
+          "propertyNames": {
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/contractSchema"
+          }
+        },
+        "additionalProperties": {
+          "const": false
+        },
+        "items": {
+          "$ref": "#/$defs/contractSchema"
+        },
+        "minItems": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "maximum": {
+          "type": "number"
+        }
+      }
+    },
+    "proseText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "not": {
+        "pattern": "^\\s|\\s$"
+      },
+      "description": "A v2 prose field: non-empty and without surrounding whitespace, matching the runtime rule exactly (an explicit null is not accepted either; omit the field instead)."
+    },
+    "proseList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/proseText"
+      },
+      "description": "A list of exact prose entries: no surrounding whitespace, no empty entries."
+    }
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "name": "offline-switchboard",
+  "version": "1.0.0",
+  "description": "Discoverable offline reference bundle: drives a synthetic switchboard through the real Jev Loop kernel with no network, no model call and no external device.",
+  "when_to_use": "Use it to check that the bundle standard, discovery, the managed host and the kernel work end to end on a machine with no credentials; read it as the worked example when writing a bundle that does touch a real environment. Do not use it as evidence that any user task was performed.",
+  "entrypoint": "bundle_controller:build",
+  "python_path": ".",
+  "inputs_schema": {
+    "type": "object",
+    "properties": {
+      "required": {
+        "type": "object"
+      },
+      "switches": {
+        "type": "object"
+      }
+    },
+    "additionalProperties": false
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "switches": {
+        "type": "object"
+      },
+      "required": {
+        "type": "object"
+      },
+      "max_steps": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 64
+      }
+    },
+    "additionalProperties": false
+  },
+  "config": {
+    "switches": {"alpha": false, "beta": false},
+    "required": {"alpha": true, "beta": true},
+    "max_steps": 8
+  },
+  "output": {
+    "description": "The controller snapshot carries the world state, the step count and the verifier verdict; the run journal (events.jsonl) is the evidence trail."
+  },
+  "runtime": {
+    "python": ">=3.12",
+    "profile": "single-process",
+    "requires_network": false
+  },
+  "dependencies": {
+    "python": ["jev-loop (this repository) — the kernel and the mock environment"],
+    "credential_env": []
+  },
+  "authorizations": [],
+  "resources": {
+    "keys": [],
+    "exclusive": true,
+    "notes": "This reference holds no external input. A real adapter must declare the input it owns (for example browser:<profile>) and the caller must pass the same key in resource_keys."
+  },
+  "stop": {
+    "grace_seconds": 3.0,
+    "release": "LoopController.request_stop releases synchronously through the controller's release callback; the run is only stopped once it is terminal and resources_released is true"
+  },
+  "verification": {
+    "independent": true,
+    "notes": "SwitchboardEnvironment holds the ground truth, the policy only picks among offered candidates, and SwitchboardVerifier re-reads the world instead of trusting the observation."
+  },
+  "scaffold": false
+}

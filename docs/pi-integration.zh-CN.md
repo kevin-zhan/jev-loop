@@ -1,9 +1,17 @@
-# pi-jev：受管理的 Jev Loop 宿主
+# pi-jev：可选的 pi 客户端
 
 [English](pi-integration.md) | **简体中文**
 
+本文讲的是**适配器**，不是 bundle 格式。规范性 bundle 契约见
+[spec/bundle-standard.zh-CN.md](../spec/bundle-standard.zh-CN.md)；由于扩展与 `jev-loop rpc`、CLI
+调用同一套运行时，发现、校验与请求协议完全一致。pi 相关的安装、cognition 投递与生命周期接线请看
+本页。
+
 `pi-jev` 是本仓随附的 pi package，不是 pi fork。它把项目内行为 bundle 作为独立进程运行，让 pi 管理
-生命周期并处理运行时认知请求；控制循环不等待主 agent 的一次回复。
+生命周期并处理运行时认知请求；控制循环不等待主 agent 的一次回复。pi 相对纯 CLI 提供的是便利，不是
+权威：它提供会话 id 作为 `owner_id`、发送心跳，并把待处理 cognition 任务投递到会话里。pi 之外的
+agent 需要自己完成这三件事（见
+[jev-loop skill 的生命周期参考](../skills/jev-loop/references/lifecycle.md)）。
 
 ```text
 pi session
@@ -40,12 +48,18 @@ pi -e https://github.com/kevin-zhan/jev-loop   # 临时试用，不写设置
 
 安装后提供：
 
-- `jev_loop` 工具：`start / list / inspect / events / update / respond / stop / release_resources`；
-  `events` 每页最多 500 条并返回 `next_seq`；
+- `jev_loop` 工具：`start / list / inspect / events / update / respond / stop / release_resources`，
+  外加 `bundles`（列出或校验已发现的 bundle）与 `validate_bundle`；`events` 每页最多 500 条并返回
+  `next_seq`；
 - `/jev-runs`：显示当前 session 拥有的 run；
 - `/jev-self-test`：离线跑一遍真实进程验收（认知等待时继续推进、结束后释放输入）；
 - `/jev-stop-all`：交互确认后停止当前 session 的所有活动 run；
-- `pi-jev` skill：教 agent 何时使用、怎样处理 cognition 和怎样验收。
+- 两个 skill：`jev-loop`（何时使用 bundle、请求协议、cognition 与安全停机）与
+  `jev-bundle-creator`（用真实模板编写 bundle）。
+
+bundle 变为与宿主无关后，主技能已从 `pi-jev` 改名为 `jev-loop`；已打开的会话要执行 `/reload`（或重启
+pi）才会更新命令列表。现在 `pi-jev` 只指这个可选的 package 与扩展；`jev_loop` 工具接口与
+`jev-loop-host rpc` 均未改变。
 
 ## 真实 Jev run 的凭据
 
@@ -74,10 +88,15 @@ uv run --env-file .env pi     # 或显式加载私有文件
   `run_dir/artifacts/workspace`，两次 run 不会共享目录；verifier 会写
   `run_dir/artifacts/verification.json`，并把判定镜像进 `inspect` 返回的 `controller.verification`。
 
-## Bundle manifest
+## bundle 引用与信任根
 
-扩展只接受内建 `diagnostic` 或当前可信项目目录内的 manifest。manifest 会执行 Python 代码，因此它是
-明确的**项目代码信任边界**，不是远端提示词。
+扩展接受内建 `diagnostic`、在 `<project>/.agents/jev-bundle/` 中发现的 bundle 名称（`project:<name>`
+或裸名称），或当前可信项目目录内的 manifest 路径。名称由 Python 运行时解析——扩展只对显式路径做预检
+以给出更友好的报错，权威判断在运行时。manifest 会执行 Python 代码，因此它是明确的**项目代码信任
+边界**，不是远端提示词。
+
+manifest 格式、字段以及哪些是强制项、哪些是建议声明，见
+[spec/bundle-standard.zh-CN.md](../spec/bundle-standard.zh-CN.md)。
 
 ```json
 {
@@ -112,7 +131,8 @@ class ManagedController(Protocol):
 - 外部设备还应有独立 watchdog，因为 Python 进程被 `SIGKILL` 时任何 cleanup 都不保证执行；
 - `snapshot` 只放有界、可 JSON 序列化的状态摘要，完整证据写入 run 的 `artifacts/`。
 
-已有 `Loop` 可直接用 `LoopController` 托管，参考
+已有 `Loop` 可直接用 `LoopController` 托管，参考可发现的 manifest v2 参考 bundle
+[`.agents/jev-bundle/offline-switchboard`](../.agents/jev-bundle/offline-switchboard) 与 legacy 格式的
 [`examples/bundles/switchboard`](../examples/bundles/switchboard)。同步 `Loop.step()` 仍然是一次一个动作；
 如果环境需要在慢模型调用期间持续推进，设备 driver/watchdog 必须在独立线程或进程运行，controller 只
 协调它。
@@ -196,6 +216,7 @@ bundle 自己仍须避免把 cookie、token 或原始隐私资料写入事件和
 ## 当前明确不包含
 
 - 没有小红书、浏览器、手机或游戏站点适配器；它们必须是单独审查和验收的 project bundle。
+- 对 bundle 格式没有权威：扩展不定义 bundle，bundle 的创建、发现、校验与运行永远不需要 pi。
 - 没有把主 agent 变成按钮决策者；按钮候选仍由 bundle 的 Jev policy 决定。
 - 没有 MCP server；需要跨宿主时可在相同 host API 外包一层适配器。
 - 没有保证任意第三方 driver 能安全停车；bundle 必须实现同步 release 和设备侧 watchdog。

@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "name": "example-notes",
+  "version": "0.3.1",
+  "description": "Example standard bundle used as the valid example in the specification tests.",
+  "when_to_use": "Use it only as a positive example; it is not a real adapter.",
+  "entrypoint": "bundle_controller:build",
+  "python_path": ".",
+  "inputs_schema": {
+    "type": "object",
+    "properties": {
+      "topic": {"type": "string", "minLength": 1, "maxLength": 80}
+    },
+    "required": ["topic"],
+    "additionalProperties": false
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "max_steps": {"type": "integer", "minimum": 1, "maximum": 64},
+      "mode": {"enum": ["draft", "final"]}
+    }
+  },
+  "config": {
+    "max_steps": 8,
+    "mode": "draft"
+  },
+  "output": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "notes": {"type": "array", "items": {"type": "string"}, "maxItems": 20}
+      },
+      "required": ["notes"]
+    },
+    "evidence": "artifacts/verification.json",
+    "description": "The verifier's evidence and the notes it accepted."
+  },
+  "runtime": {
+    "python": ">=3.12",
+    "profile": "single-process",
+    "requires_network": false
+  },
+  "dependencies": {
+    "python": ["stdlib only"],
+    "credential_env": ["TYPESAFE_API_KEY"]
+  },
+  "authorizations": ["notes.write"],
+  "resources": {
+    "keys": ["notes:local"],
+    "exclusive": true,
+    "notes": "Advisory expectation; the caller creates the real claim."
+  },
+  "stop": {
+    "grace_seconds": 3.0,
+    "release": "request_stop releases held inputs synchronously"
+  },
+  "verification": {
+    "independent": true,
+    "notes": "The verifier re-reads the environment."
+  },
+  "scaffold": false
+}

@@ -29,6 +29,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, NoReturn
 
+from .bundles.manifest import ManifestError, load_manifest
+from .bundles.resolve import BundleRefError, resolve_bundle_ref
+from .bundles.validate import validate_manifest_path
 from .policies.config import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_API_URL,
@@ -78,29 +81,52 @@ def _check(name: str, status: str, detail: str = "") -> dict[str, str]:
     return entry
 
 
-def _read_bundle(path: Path) -> tuple[dict[str, Any], str, bool]:
-    """Read a bundle manifest for its non-secret config only; never import or execute it."""
+def _read_bundle(reference: str, project_root: Path) -> tuple[dict[str, Any], str, bool]:
+    """Read a bundle manifest for its non-secret config only; never import or execute it.
+
+    A bare name is looked up in ``<project_root>/.agents/jev-bundle/``; anything else is read
+    as a manifest path (this is a read-only preflight, so the host's project-root
+    containment rule is re-checked at start, not here).  A bundle whose static contract has
+    errors fails the preflight instead of being reported as ready.
+    """
+    path: Path | None = None
+    if _is_bundle_name(reference):
+        try:
+            resolved = resolve_bundle_ref(reference, project_root)
+        except BundleRefError as error:
+            return {}, f"cannot resolve bundle {reference!r} ({_short(error)})", False
+        path = resolved.manifest_path
+    else:
+        path = Path(reference).expanduser()
+    if path is None:
+        return {}, f"bundle {reference!r} has no manifest to check", True
+    report = validate_manifest_path(path)
+    errors = report.get("errors") or ()
+    if errors:
+        first = errors[0]
+        reason = _short(str(first["detail"]).replace(str(path), "").replace("  ", " ")).strip()
+        return {}, f"manifest is invalid ({first['code']}: {reason})", False
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        return {}, f"cannot read bundle manifest ({error.__class__.__name__})", False
-    if not isinstance(manifest, dict):
-        return {}, "bundle manifest must be a JSON object", False
-    if manifest.get("schema_version") != 1:
-        return {}, "bundle schema_version must be 1", False
-    entrypoint = manifest.get("entrypoint")
-    if not isinstance(entrypoint, str) or ":" not in entrypoint:
-        return {}, "bundle entrypoint must be shaped like 'module:function'", False
-    python_path = (path.resolve().parent / str(manifest.get("python_path", "."))).resolve()
-    if not python_path.is_dir():
-        return {}, "bundle python_path is not a directory", False
-    config = manifest.get("config")
-    if config is None:
-        config = {}
-    if not isinstance(config, dict):
-        return {}, "bundle config must be a JSON object", False
-    selected = {key: config[key] for key in BUNDLE_CONFIG_KEYS if key in config}
-    return selected, f"manifest {path} is well-formed", True
+        manifest = load_manifest(path.resolve())
+    except ManifestError as error:
+        return {}, f"cannot read bundle manifest {path} ({_short(error)})", False
+    selected = {key: manifest.config[key] for key in BUNDLE_CONFIG_KEYS if key in manifest.config}
+    detail = f"manifest {path} is well-formed (schema_version {manifest.schema_version})"
+    if manifest.scaffold:
+        detail += "; scaffold=true, the host refuses to start it by default"
+    return selected, detail, True
+
+
+def _is_bundle_name(reference: str) -> bool:
+    if any(character in reference for character in ("/", "\\")) or reference.endswith(".json"):
+        return False
+    return reference != "diagnostic" and bool(reference)
+
+
+def _short(error: object) -> str:
+    """Keep preflight details short and free of raw exception chains."""
+    text = " ".join(str(error).split())
+    return text if len(text) <= 160 else text[:157] + "..."
 
 
 def _resolve_text(flag: str | None, manifest: object, default: str, *, label: str) -> str:
@@ -273,13 +299,13 @@ def build_report(
     timeout: float | None,
     env_name: str,
     offline: bool,
-    bundle: Path | None,
+    bundle: str | None,
     environ: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, Any], int]:
     config: dict[str, Any] = {}
     bundle_check: dict[str, str] | None = None
     if bundle is not None:
-        config, problem, valid = _read_bundle(bundle)
+        config, problem, valid = _read_bundle(bundle, Path.cwd())
         bundle_check = _check("bundle", "ok" if valid else "fail", problem)
 
     settings_error: str | None = None
@@ -336,8 +362,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--bundle",
-        type=Path,
-        help="read a bundle manifest's non-secret config (model/api_url/timeout); never imports it",
+        type=str,
+        default=None,
+        help=(
+            "read a bundle manifest's non-secret config (model/api_url/timeout), or a bundle name "
+            "discovered in ./.agents/jev-bundle/; never imports it"
+        ),
     )
     parser.add_argument("--api-url", default=None, help="override the endpoint used for the check")
     parser.add_argument("--model", default=None, help="override the model used for the check")

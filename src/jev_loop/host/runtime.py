@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from ..bundles.manifest import BundleManifest, ManifestError, load_manifest
 from ..core.loop import Loop
 from ..core.types import RunStatus
 from .events import ManagedEventKind
@@ -344,6 +345,17 @@ def _loop_result(loop: Loop) -> ControllerResult:
     )
 
 
+def load_manifest_for_run(spec: RunSpec) -> BundleManifest | None:
+    """Read the manifest a run was started from, with the same rules as the loader.
+
+    Used by the worker to enforce the declared task/config contract on updates without
+    importing any bundle code.
+    """
+    if spec.bundle == "diagnostic":
+        return None
+    return load_manifest(Path(spec.bundle))
+
+
 def load_controller(spec: RunSpec, services: RuntimeServices) -> ManagedController:
     if spec.bundle == "diagnostic":
         from .diagnostic import DiagnosticController
@@ -352,17 +364,19 @@ def load_controller(spec: RunSpec, services: RuntimeServices) -> ManagedControll
 
     manifest_path = Path(spec.bundle).resolve()
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise BundleError(f"cannot read bundle manifest {manifest_path}: {error}") from error
-    if manifest.get("schema_version") != 1:
-        raise BundleError("bundle schema_version must be 1")
-    entrypoint = manifest.get("entrypoint")
-    if not isinstance(entrypoint, str) or ":" not in entrypoint:
-        raise BundleError("bundle entrypoint must be 'module:function'")
-    python_path = (manifest_path.parent / str(manifest.get("python_path", "."))).resolve()
+        manifest = load_manifest(manifest_path)
+    except ManifestError as error:
+        raise BundleError(str(error)) from error
+    entrypoint = manifest.entrypoint
+    python_path = manifest.python_dir
     if not python_path.is_dir():
         raise BundleError(f"bundle python_path is not a directory: {python_path}")
+    if manifest.is_standard:
+        bundle_dir = manifest_path.parent
+        if python_path != bundle_dir and not python_path.is_relative_to(bundle_dir):
+            raise BundleError(
+                f"bundle python_path {manifest.python_path!r} resolves outside the bundle directory {bundle_dir}"
+            )
     module_name, function_name = entrypoint.split(":", 1)
     # Keep the trusted bundle path available for lazy imports during the run.
     if str(python_path) not in sys.path:
@@ -370,7 +384,7 @@ def load_controller(spec: RunSpec, services: RuntimeServices) -> ManagedControll
     try:
         module = importlib.import_module(module_name)
         factory = getattr(module, function_name)
-        config = {**dict(manifest.get("config") or {}), **spec.bundle_config}
+        config = {**dict(manifest.config), **spec.bundle_config}
         controller = factory(spec, services, config)
     except Exception as error:
         raise BundleError(f"bundle factory {entrypoint!r} failed: {error!r}") from error

@@ -96,16 +96,17 @@
     <li><a href="#what">0. Decide whether you need it</a></li>
     <li><a href="#concepts">1. What the layers are</a></li>
     <li><a href="#setup">2. Prepare the environment</a></li>
-    <li><a href="#path-a">3. Path A: as a Python library</a></li>
-    <li><a href="#live">4. Configure credentials and run a real Jev case</a></li>
-    <li><a href="#path-b">5. Path B: inside pi</a></li>
-    <li><a href="#path-c">6. Path C: your own host</a></li>
-    <li><a href="#bundle">7. Write your own bundle</a></li>
-    <li><a href="#safety">8. Lifecycle and safety semantics</a></li>
-    <li><a href="#verify">9. Verification and what "done" means</a></li>
-    <li><a href="#pitfalls">10. Common pitfalls</a></li>
-    <li><a href="#map">11. Directory map</a></li>
-    <li><a href="#publish">12. Repository maintenance (owner)</a></li>
+    <li><a href="#bundle-cli">3. Path A: bundles and the standard CLI (no pi)</a></li>
+    <li><a href="#path-a">4. Path B: as a Python library</a></li>
+    <li><a href="#live">5. Configure credentials and run a real Jev case</a></li>
+    <li><a href="#path-b">6. Path C: inside pi</a></li>
+    <li><a href="#path-c">7. Path D: your own host</a></li>
+    <li><a href="#bundle">8. Write your own bundle</a></li>
+    <li><a href="#safety">9. Lifecycle and safety semantics</a></li>
+    <li><a href="#verify">10. Verification and what "done" means</a></li>
+    <li><a href="#pitfalls">11. Common pitfalls</a></li>
+    <li><a href="#map">12. Directory map</a></li>
+    <li><a href="#publish">13. Repository maintenance (owner)</a></li>
   </ol>
 </nav>
 
@@ -170,9 +171,10 @@ bundle (code in your project + a manifest)
   </table>
   <div class="callout tip">
     <p><strong>Naming note:</strong> <code>jev-loop</code> refers both to the single-loop kernel and to
-    the whole package (kernel + host + pi extension); the tool is called <code>jev_loop</code> and the
-    skill <code>pi-jev</code>; <em>a bundle is not a component in this repository</em> — it is the
-    contract name for a project-side behavior package.</p>
+    the whole package (kernel + host + optional pi extension); the pi tool is called <code>jev_loop</code>
+    and the skills are <code>jev-loop</code> (run one) and <code>jev-bundle-creator</code> (write one);
+    <em>a bundle is not a component in this repository</em> — it is the contract name for a project-side
+    behavior package. <code>pi-jev</code> now names only the optional pi package and extension.</p>
   </div>
 </section>
 
@@ -185,7 +187,7 @@ bundle (code in your project + a manifest)
     <tr><td><a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a> (recommended) or pip</td><td>The only development dependencies are pytest and ruff</td></tr>
     <tr><td>Node ≥ 22</td><td>Node is a dependency of pi itself and is used for the extension-side RPC test <code>npm test</code></td></tr>
     <tr><td>pi (optional)</td><td>Only needed for the "use it inside pi" path</td></tr>
-    <tr><td>A TypeSafe / Jev API key</td><td>Needed only for live Jev decision requests. Every test and demo in this repository is offline and needs no key. Set <code>TYPESAFE_API_KEY</code> in the process environment (section 4) when you connect the real service; the library never falls back to a mock and never searches for a key itself</td></tr>
+    <tr><td>A TypeSafe / Jev API key</td><td>Needed only for live Jev decision requests. Every test and demo in this repository is offline and needs no key. Set <code>TYPESAFE_API_KEY</code> in the process environment (section 5) when you connect the real service; the library never falls back to a mock and never searches for a key itself</td></tr>
   </table>
   <pre><code>git clone https://github.com/kevin-zhan/jev-loop.git   # private repository: access required
 cd jev-loop
@@ -196,8 +198,58 @@ uv sync</code></pre>
 ./.venv/bin/jev-loop-demo --scenario clean</code></pre>
 </section>
 
+<section id="bundle-cli">
+  <h2>3. Path A: bundles and the standard CLI (no pi)</h2>
+  <p class="lede">Bundles are a host-neutral standard, not a pi feature. A bundle lives in
+  <code>&lt;project_root&gt;/.agents/jev-bundle/&lt;name&gt;/</code> with a <code>bundle.json</code> machine
+  contract and a <code>BUNDLE.md</code> an agent reads before starting it. Any agent with a shell can
+  create, discover, inspect, validate and run one; pi is an optional client of the same runtime. The
+  normative contract is <a href="../spec/bundle-standard.md">spec/bundle-standard.md</a>, the authoring
+  guide is <a href="bundle-authoring.md">docs/bundle-authoring.md</a>, and
+  <code>.agents/jev-bundle/offline-switchboard</code> is a complete offline reference.</p>
+
+  <h3>3.1 Discover, inspect and validate</h3>
+  <pre><code>uv run jev-loop bundle list                                  # bundles in this project
+uv run jev-loop bundle show project:offline-switchboard      # metadata and declarations
+uv run jev-loop bundle validate project:offline-switchboard  # static contract check
+uv run jev-loop bundle conformance project:offline-switchboard --run-tests</code></pre>
+  <p>References are <code>diagnostic</code> (the built-in contract probe), <code>project:&lt;name&gt;</code>,
+  a bare discovered name, or a manifest path inside the project root. Discovery reads JSON and filesystem
+  metadata only: no import, no execution, no dependency install, no network request and no write inside a
+  bundle. <code>conformance</code> proves that inertness with a child-process probe and, with
+  <code>--run-tests</code>, runs the bundle's own tests under a bounded timeout — its runtime-semantics
+  section stays <code>not_checked</code>.</p>
+
+  <h3>3.2 Create one</h3>
+  <pre><code>uv run jev-loop bundle init review-notes --description "triage the review inbox"</code></pre>
+  <p>That writes <code>.agents/jev-bundle/review-notes/</code> from templates shipped inside the installed
+  package, so it also works from a wheel outside this checkout. It refuses to touch an existing target
+  path, and the result is explicitly a scaffold: <code>scaffold: true</code>, a controller that raises
+  until implemented, and offline author tests. The host refuses to start a scaffold by default; a scaffold
+  run would prove plumbing only, never a user task.</p>
+
+  <h3>3.3 Run one through the request protocol</h3>
+  <pre><code>printf '%s' '{"action":"start","owner_id":"my-session","idempotency_key":"task-1",
+  "project_root":"'"$PWD"'","bundle":"project:offline-switchboard",
+  "task":{"goal":"turn on every required switch"},"max_runtime_seconds":30}' | uv run jev-loop rpc</code></pre>
+  <p><code>start</code> returns immediately with a <code>run_id</code>. Then <code>inspect</code> and
+  <code>events</code> for evidence, <code>heartbeat</code> to renew the lease, <code>respond</code> to
+  answer a pending cognition job, and <code>stop</code> to end it. Two duties are yours outside pi: the
+  CLI does not notify you and does not heartbeat for you. A run is finished only when its status is
+  terminal, <code>resources_released</code> is true and the bundle's verifier says
+  <code>satisfied</code>.</p>
+  <div class="callout warn">
+    <p><strong>Honest limits.</strong> The standard is host-neutral and any agent with a shell and the CLI
+    can use it, but no third-party product is claimed to implement the format natively. A manifest loads
+    project code with your privileges: discovery and validation are inert, running a bundle is not a
+    sandbox. Declared authorizations, resource expectations, dependencies, stop intent and verification
+    intent are advisory — <code>bundle validate</code> marks enforced, advisory and not-checked
+    separately.</p>
+  </div>
+</section>
+
 <section id="path-a">
-  <h2>3. Path A: as a Python library (no pi, no network)</h2>
+  <h2>4. Path B: as a Python library (no pi, no network)</h2>
   <p>Start with the built-in demo to get a feel for the semantics: the three scenarios show "a normal
   finish", "an action with no effect narrows the candidate set", and "a reversible cycle is suspended
   to wait for new information".</p>
@@ -233,7 +285,7 @@ print(result.status, result.stop_reason)</code></pre>
   <code>my_verifier</code> are yours to provide. <code>default_request_fn()</code> reads the credential
   from the process environment and fails before the first action when it is missing or unusable; code
   that already holds a secret keeps the explicit <code>http_request_fn(api_key=...)</code> injection
-  point. A complete runnable case is in section 4.</p>
+  point. A complete runnable case is in section 5.</p>
   <p>Key points:</p>
   <ul>
     <li>A candidate id returned by a policy is <strong>valid only inside its frame</strong>; before
@@ -249,7 +301,7 @@ print(result.status, result.stop_reason)</code></pre>
 </section>
 
 <section id="live">
-  <h2>4. Configure credentials and run a real Jev case</h2>
+  <h2>5. Configure credentials and run a real Jev case</h2>
   <p class="lede">The quick-start demo and the test suite above are offline. A live run needs a
   TypeSafe/Jev API key that you provide; this section is the supported path from a clean clone to a
   real Jev decision, its evidence and a clean stop. It needs no private repository, no browser profile
@@ -364,9 +416,9 @@ uv run --env-file .env pi     # or load a private file explicitly; /reload does 
 </section>
 
 <section id="path-b">
-  <h2>5. Path B: inside pi (the pi-jev extension)</h2>
+  <h2>6. Path C: inside pi (the pi-jev extension)</h2>
   <p>The repository root is itself a pi package (<code>package.json</code> declares
-  <code>extensions/pi-jev.ts</code> and <code>skills/pi-jev</code>). Pi itself is not installed by this
+  <code>extensions/pi-jev.ts</code>, <code>skills/jev-loop</code> and <code>skills/jev-bundle-creator</code>). Pi itself is not installed by this
   repository: install it using its official installation instructions (see the
   <a href="https://github.com/earendil-works/pi">pi repository</a>), make sure Python 3.12+ is available,
   then register this local package from the clone:</p>
@@ -380,13 +432,20 @@ pi install .            # registers this local package, referencing the clone in
 # or a temporary try that writes no settings:
 # pi -e https://github.com/kevin-zhan/jev-loop</code></pre>
   <p>Run <code>/reload</code> in an open pi session afterwards; the package provides:</p>
+  <div class="callout tip">
+    <p><strong>Renamed skill:</strong> the main skill used to be <code>pi-jev</code> and is now
+    <code>jev-loop</code> (<code>/skill:jev-loop</code>), with <code>jev-bundle-creator</code> added for
+    authoring. An already-open session keeps the old command list until you run <code>/reload</code> or
+    restart pi. The pi tool interface and <code>jev-loop-host rpc</code> are unchanged.</p>
+  </div>
   <table>
     <tr><th>Entry point</th><th>Purpose</th></tr>
-    <tr><td><code>jev_loop</code> tool</td><td><code>start / list / inspect / events / update / respond / stop / release_resources</code></td></tr>
+    <tr><td><code>jev_loop</code> tool</td><td><code>start / list / inspect / events / update / respond / stop / release_resources / bundles / validate_bundle</code></td></tr>
     <tr><td><code>/jev-runs</code></td><td>Shows the runs owned by the current session</td></tr>
     <tr><td><code>/jev-self-test</code></td><td>Runs an offline acceptance of the real process (keeps progressing while a cognition job is pending, releases inputs when stopped)</td></tr>
     <tr><td><code>/jev-stop-all</code></td><td>Stops all active runs of this session after interactive confirmation</td></tr>
-    <tr><td><code>pi-jev</code> skill</td><td>Teaches the agent when to use it, how to handle cognition, and how to verify</td></tr>
+    <tr><td><code>jev-loop</code> skill</td><td>Teaches the agent when to use a bundle, how to handle cognition, and how to verify (formerly named <code>pi-jev</code>)</td></tr>
+    <tr><td><code>jev-bundle-creator</code> skill</td><td>Teaches how to author a bundle from a real template</td></tr>
   </table>
   <ul>
     <li>The extension uses <code>python3</code> by default; point it elsewhere with
@@ -406,7 +465,7 @@ pi install .            # registers this local package, referencing the clone in
 </section>
 
 <section id="path-c">
-  <h2>6. Path C: attach your own host</h2>
+  <h2>7. Path D: attach your own host</h2>
   <p>pi is not required. The host API is exported from <code>jev_loop.host</code>, and the command-line
   entry point <code>jev-loop-host</code> offers <code>rpc</code> (one JSON in on stdin, one JSON out on
   stdout) plus the internal <code>worker</code>:</p>
@@ -426,7 +485,7 @@ pi install .            # registers this local package, referencing the clone in
     <tr><td><code>list</code> / <code>inspect</code></td><td><code>owner_id</code> (+ <code>run_id</code>)</td></tr>
     <tr><td><code>events</code></td><td><code>owner_id · run_id</code>, optional <code>after</code> (cursor) and <code>limit</code> (≤500)</td></tr>
     <tr><td><code>heartbeat</code> / <code>update</code> / <code>stop</code> / <code>respond</code></td><td>Turned into commands for a run; <code>respond</code> needs <code>run_id · job_id · expected_job_version</code></td></tr>
-    <tr><td><code>release_resources</code></td><td>Only after independently confirming that external inputs were released (see section 7)</td></tr>
+    <tr><td><code>release_resources</code></td><td>Only after independently confirming that external inputs were released (see section 9)</td></tr>
   </table>
   <ul>
     <li><strong>Idempotency</strong>: <code>(owner_id, project_root, idempotency_key)</code> maps to
@@ -440,7 +499,7 @@ pi install .            # registers this local package, referencing the clone in
 </section>
 
 <section id="bundle">
-  <h2>7. Write your own bundle</h2>
+  <h2>8. Write your own bundle</h2>
   <p>The contract text is the "Bundle manifest" section of <code>docs/pi-integration.md</code>; the
   runnable template is <code>examples/bundles/switchboard/</code> (a manifest plus a 24-line controller,
   really loaded by <code>tests/test_host_service.py</code>). The minimal checklist follows.</p>
@@ -531,7 +590,7 @@ job = services.cognition.get(job_id)   # pending / completed / expired ...</code
 </section>
 
 <section id="safety">
-  <h2>8. Lifecycle and safety semantics</h2>
+  <h2>9. Lifecycle and safety semantics</h2>
   <table>
     <tr><th>Semantics</th><th>Behavior</th></tr>
     <tr><td>Idempotent start</td><td><code>owner session + project root + idempotency key</code> maps to one run; a repeated call returns the same run</td></tr>
@@ -550,7 +609,7 @@ job = services.cognition.get(job_id)   # pending / completed / expired ...</code
 </section>
 
 <section id="verify">
-  <h2>9. Verification and what "done" means</h2>
+  <h2>10. Verification and what "done" means</h2>
   <p>These commands should pass in the cloned repository (all offline; no model calls, no API key):</p>
   <pre><code>uv run pytest              # kernel + host + bundle contract, all offline
 uv run ruff check .
@@ -579,7 +638,7 @@ npm test                   # real pi RPC load of the extension, no model calls</
 </section>
 
 <section id="pitfalls">
-  <h2>10. Common pitfalls</h2>
+  <h2>11. Common pitfalls</h2>
   <ul>
     <li><strong>Do not guess where the credential goes.</strong> The supported source is
       <code>TYPESAFE_API_KEY</code> in the process environment (export it in the shell, or let uv load a
@@ -611,26 +670,30 @@ npm test                   # real pi RPC load of the extension, no model calls</
 </section>
 
 <section id="map">
-  <h2>11. Directory map</h2>
+  <h2>12. Directory map</h2>
   <table>
     <tr><th>Path</th><th>Contents</th></tr>
     <tr><td><code>src/jev_loop/core/</code></td><td>state, events, reduce, frame, guards, loop — the explicit-state kernel</td></tr>
     <tr><td><code>src/jev_loop/policies/</code></td><td><code>scripted</code> (offline, deterministic), <code>jev</code> (question building and answer parsing, the only network caller)</td></tr>
     <tr><td><code>src/jev_loop/adapters/</code>, <code>verifiers/</code>, <code>stores/</code></td><td>A mock environment with injectable faults, a predicate verifier, in-memory / JSONL event stores</td></tr>
-    <tr><td><code>src/jev_loop/host/</code></td><td>The managed host: lease, cognition broker, bundle contract, event and command exchange</td></tr>
+    <tr><td><code>src/jev_loop/host/</code></td><td>The managed host: lease, cognition broker, loader, event and command exchange</td></tr>
+    <tr><td><code>src/jev_loop/bundles/</code></td><td>The Jev Bundle Specification implementation: manifest, discovery, resolution, static validation, scaffolding, conformance (shared by the CLI, the doctor and the host)</td></tr>
+    <tr><td><code>src/jev_loop/cli.py</code></td><td><code>jev-loop</code>: <code>bundle list/show/validate/init/conformance</code> and the <code>rpc</code> alias</td></tr>
     <tr><td><code>extensions/pi-jev.ts</code></td><td>The pi tool surface, background event delivery, session heartbeat</td></tr>
-    <tr><td><code>skills/pi-jev/</code></td><td>The agent manual (when to use it, how to handle cognition, how to verify)</td></tr>
+    <tr><td><code>skills/jev-loop/</code>, <code>skills/jev-bundle-creator/</code></td><td>The agent manuals: running a bundle (protocol, heartbeat, cognition, safe stop) and authoring one (contract, checklist, offline tests)</td></tr>
+    <tr><td><code>.agents/jev-bundle/offline-switchboard/</code></td><td>The discoverable offline reference bundle (manifest v2, independent verifier, author tests)</td></tr>
     <tr><td><code>examples/bundles/switchboard/</code></td><td>The minimal bundle template (really loaded by this repository's tests)</td></tr>
     <tr><td><code>examples/live-files/</code></td><td>The runnable live reference: real filesystem environment with synthetic files, real Jev policy, independent verifier, host manifest</td></tr>
     <tr><td><code>src/jev_loop/doctor.py</code></td><td><code>jev-loop-doctor</code>: offline preflight of the local Jev configuration (no network request)</td></tr>
-    <tr><td><code>docs/design.md</code>, <code>docs/pi-integration.md</code></td><td>Kernel invariants and guard semantics; pi integration and the bundle contract body</td></tr>
+    <tr><td><code>spec/bundle-standard.md</code>, <code>docs/bundle-authoring.md</code></td><td>The normative bundle contract and the authoring guide (both with Chinese copies)</td></tr>
+    <tr><td><code>docs/design.md</code>, <code>docs/pi-integration.md</code></td><td>Kernel invariants and guard semantics; the optional pi adapter</td></tr>
     <tr><td><code>tests/</code></td><td>All offline; <code>tests/pi-extension/</code> loads the extension with real pi RPC</td></tr>
     <tr><td><code>~/.local/state/jev-loop/runs/&lt;run-id&gt;/</code></td><td>Runtime data: <code>spec.json · events.jsonl · status.json · inbox/ acks/ · artifacts/</code></td></tr>
   </table>
 </section>
 
 <section id="publish">
-  <h2>12. Repository maintenance (owner's view)</h2>
+  <h2>13. Repository maintenance (owner's view)</h2>
   <p>This section is not for users; it records the repository's current state and release conventions:</p>
   <table>
     <tr><th>Item</th><th>State / convention</th></tr>
@@ -638,7 +701,7 @@ npm test                   # real pi RPC load of the extension, no model calls</
     <tr><td>CI</td><td><code>.github/workflows/ci.yml</code>: <code>uv run pytest</code> + <code>uv run ruff check .</code> + <code>uv run jev-loop-doctor --offline</code> (no key in CI), plus a job that installs pi and runs <code>npm test</code></td></tr>
     <tr><td>Specifications</td><td><code>spec/</code> (questions / state / fixture) is under version control</td></tr>
     <tr><td>Releases</td><td>The version number is kept in sync between <code>pyproject.toml</code> and <code>package.json</code>; <code>git tag vX.Y.Z &amp;&amp; git push origin vX.Y.Z</code>. No tags are currently published</td></tr>
-    <tr><td>Documentation language</td><td>English is canonical; every English document has an information-equal Chinese copy (<code>*.zh-CN.md</code> / <code>*.zh-CN.html</code>); <code>AGENTS.md</code> and <code>skills/pi-jev/SKILL.md</code> are English only; code comments, runtime messages and commit messages are English</td></tr>
+    <tr><td>Documentation language</td><td>English is canonical; every English document has an information-equal Chinese copy (<code>*.zh-CN.md</code> / <code>*.zh-CN.html</code>); <code>AGENTS.md</code> and both skills are English only; code comments, runtime messages and commit messages are English</td></tr>
     <tr><td>Privacy</td><td>Tests and demos in this repository need no key; <code>.gitignore</code> excludes <code>.venv/ .env .env.* artifacts/</code> while tracking an empty <code>.env.example</code>; <code>jev-loop-doctor</code> prints only presence and the variable name (never the value, length or a hash); before committing, use <code>git grep -i</code> to check for tokens, cookies and internal addresses</td></tr>
   </table>
 </section>
