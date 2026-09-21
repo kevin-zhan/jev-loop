@@ -112,15 +112,17 @@
 
 <section id="what">
   <h2>0. Decide whether you need it</h2>
-  <p class="lede">In one sentence: <strong>hand the decision to the model and keep the loop, the state,
-  the termination and the acceptance in code.</strong> The kernel is built for policies that answer
-  deterministically for a given frame: the same observation and candidate set produce the same answer.
-  Under that assumption a model will never notice on its own that it is repeating itself, so the force
-  that moves the loop forward has to come from code.</p>
+  <p class="lede">In one sentence: <strong>Jev supplies the fast local judgment; code keeps the loop,
+  the state, the termination and the acceptance.</strong> Jev makes hundred-millisecond-scale AI judgments
+  practical (<a href="../README.md">decision-request timing measured in the README example</a>, not a
+  per-call or whole-task guarantee), so the next step can be chosen inside the running loop — observe the
+  task state, choose the next action, execute it, update the state, decide again — instead of waiting for
+  a full slow reasoning turn.</p>
   <div class="grid2">
     <div class="card">
       <h4>A good fit</h4>
       <ul>
+        <li>Repeated local decisions where each choice should not wait for a full reasoning turn (fast, focused judgments over the current task state);</li>
         <li>An environment has to keep being operated (browser, device, workstation, long process) while the model still makes judgments;</li>
         <li>You worry about "it gets stuck, clicks the same button again, or treats the model's DONE as success";</li>
         <li>You need a replayable event log, explicit resource exclusivity and crash isolation outside the process;</li>

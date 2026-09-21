@@ -5,9 +5,10 @@ before working in it.
 
 ## What this project is
 
-An explicit-state decision runtime: **code owns the loop, the state and the termination; a policy
-(Jev or any implementation) only chooses inside one frame.** It covers the responsibilities that fall
-outside `state + questions → answer`. The design rationale is in `README.md`; the first kernel version
+A runtime for high-speed intelligent loops: **Jev's fast, structured judgments make the continuous
+observe → decide → act → update cycle practical; code owns the loop, the state and the termination, and a
+policy (Jev or any implementation) only chooses inside one frame.** It covers the responsibilities that
+fall outside `state + questions → answer`. The design rationale is in `README.md`; the first kernel version
 does single-environment, single-writer execution only — no multi-environment work, automatic planning
 or sub-loops.
 

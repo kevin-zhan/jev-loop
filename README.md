@@ -5,56 +5,80 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**A Python runtime for AI-driven tasks that keep observing, acting, and checking results.**
+**High-speed intelligent loops powered by Jev.**
 
-`jev-loop` lets a model choose only the next allowed step while code owns execution, state and success
-verification; the model never has to remember what was tried or decide when to stop. An optional
+Jev makes hundred-millisecond-scale AI judgments practical.[^latency] `jev-loop` turns that capability
+into a continuous cycle: observe the task state, choose the next action with Jev, execute it, update the
+state from what was actually observed, and decide again. High-frequency local decisions no longer have to
+occupy a full, slow agent reasoning turn.
+
+Code still owns the loop, the execution and the stop conditions — the model chooses the next step from an
+explicit offer, and every cycle stays bounded, replayable and verifiable. An optional
 [pi](https://github.com/earendil-works/pi) integration (pi-jev) runs a suitable project bundle in its own
 worker, so the environment keeps moving while the main agent reasons.
+
+[^latency]: Latency note: the public example project
+    [`browser-use/jev-ultrafast`](https://github.com/browser-use/jev-ultrafast/blob/1231850a0bf1a0c0341fe408ef1668dbbfdfac46/docs/flights-measurement.json)
+    records its Jev decision requests at commit `1231850a`: 17 decision requests with a median of 178 ms
+    in that example's `docs/flights-measurement.json`. That is decision-request timing for one external
+    example and workload — not a TypeSafe SLA, not a general latency or hard-real-time guarantee, and not
+    whole-task duration; observation, execution, network and input size all affect how fast a loop
+    actually runs.
 
 This repository is currently private and source-only: install it by cloning. It is not published to
 PyPI or npm.
 
-## The problem
+## Why this exists
 
-Repeated interactive tasks can run into failure modes that the model itself does not notice:
+Interactive work does not wait. When a reasoning model re-plans the whole task before every step, each
+local decision costs a full agent turn — and by the time the choice comes back, the page, screen or
+process has already moved on. That is a timeliness problem: repeated local decisions are exactly where a
+slow reasoning loop cannot keep up.
 
-- an action that already had no effect can be picked again, because nothing forces a different choice;
-- a tool returning can be mistaken for the action having worked, and the action working can be mistaken
-  for the task being done;
-- the loop can stall while the model "thinks", or burn its whole step budget instead of naming the cycle;
-- afterwards there may be no replayable record of what was tried, what actually changed, and why success
-  was believed.
+It is an efficiency problem too. A full turn of reasoning, context re-reading and text generation is a lot
+of latency and tokens to spend on one bounded step. Jev answers that end of the job: a System One model
+returns typed decisions and probabilities software consumes directly, so the judgment path can run inside
+the loop rather than around it.
 
-Putting the loop, the state, the stop conditions and the success verdict in code — and giving the model
-a narrow, well-formed choice — is what this project is about.
+So the work is split by cost. Jev supplies the fast local judgment over the current state; the loop
+executes the chosen step and folds the observed result back into the state. Complex planning, content
+generation or anomalies can still go back to the slow main agent, bundles that can make progress on their
+own keep working, and a step whose dependencies are unmet waits instead of acting blindly.
 
-## Approach
+## How it works
 
 ```text
-observe → offer → decide → validate → execute → reduce → guard
-   ↑                                                       │
-   └───────────────────────────────────────────────────────┘
+task state → Jev decision → action → observed state update → next decision
+     ↑                                                              │
+     └──────────────────────────────────────────────────────────────┘
 ```
 
-- **Code owns the loop.** A policy (Jev or anything else) receives one immutable frame and may answer
-  only with a candidate id from that frame. Observations, offered actions, pre-execution validation,
-  stop conditions and budgets are all code.
-- **Events are the state.** State is derived by a pure reducer over an append-only event log, so a run
-  can be replayed and explained rather than reconstructed from chat history.
-- **A result is not progress.** Every execution records a four-value receipt
-  (`completed / rejected / pending / unknown`); `pending` and `unknown` operations may only be queried,
-  never blindly resent, and `idempotency=NONE` is never retried.
-- **Verification is independent.** `request_finish` only asks for verification; only a verifier
-  returning `satisfied` counts as success, and `unknown` stays unknown.
-- **Guards keep the loop alive or stop it honestly.** No-effect writes, repeats on one observation and
-  revisited frames narrow the candidate set, then suspend, then end with a named reason. The full guard
-  table and the invariants behind it are in [docs/design.md](docs/design.md).
+1. **Observe the task state.** The bundle reports the observable state the next decision needs: current
+   facts, progress, constraints and recent actions. "Global state" here is scoped to the task — not an
+   omniscient world model, and not the raw DOM dumped into a prompt.
+2. **Ask Jev to choose the next step.** The policy receives one immutable frame with that state and the
+   candidate actions valid right now, and returns a candidate ID with decision metadata; the loop
+   validates the choice before executing it.
+3. **Execute and observe.** The bundle performs the action; the loop records the receipt and re-reads the
+   environment instead of assuming the action worked.
+4. **Update the state and decide again.** New observations enter the append-only event log, the state is
+   derived again, and the next frame is offered — until an independent verifier confirms the work is done,
+   or the loop stops for a named reason.
+
+The executor does not hide the policy: the bundle owns the environment adapter, and the judgment stays
+explicit. Code owns what the policy may decide (offered actions, preconditions, budgets, stop conditions),
+which is what makes a fast model safe to run continuously.
 
 ## Use cases
 
-Good fits:
+The loop fits work that can report a **reliable current state**, offer **clear next actions**, and return
+**quick feedback** about what changed:
 
+- **Dynamic browser interaction.** A page has to be read and steered step by step, and each step's
+  choice should not wait for a full reasoning turn.
+- **Games, simulators and devices.** Long-running input that needs a fresh judgment every few hundred
+  milliseconds. These are directions, not shipped integrations: each needs a purpose-built bundle with
+  its own adapter and, for real devices, an out-of-process watchdog.
 - **Long-running environment work with a slow reasoning model.** The bundle is responsible for keeping
   the environment moving; the host gives it an independent worker and a channel for asking the main agent
   bounded questions asynchronously, so the loop does not block on a single reply.
@@ -179,6 +203,26 @@ stdin and writes one JSON response to stdout
 (`start / list / inspect / events / heartbeat / update / stop / respond / release_resources`);
 the host API is exported from `jev_loop.host`. A worked example of the JSON is in
 [docs/getting-started.html](docs/getting-started.html).
+
+## What keeps it reliable
+
+Fast judgment only helps if the cycle around it is trustworthy, so the loop, the state and the verdicts
+are code:
+
+- **Code owns the loop.** A policy (Jev or anything else) receives one immutable frame and may answer
+  only with a candidate id from that frame. Observations, offered actions, pre-execution validation,
+  stop conditions and budgets are all code, and the guards limit repeats of a step that had no effect.
+- **Events are the state.** State is derived by a pure reducer over an append-only event log, so a run
+  can be replayed and explained rather than reconstructed from chat history.
+- **A result is not progress.** Every execution records a four-value receipt
+  (`completed / rejected / pending / unknown`); `pending` and `unknown` operations may only be queried,
+  never blindly resent, and `idempotency=NONE` is never retried.
+- **Verification is independent.** `request_finish` only asks for verification; only a verifier
+  returning `satisfied` counts as success, and `unknown` stays unknown — a tool returning is not the
+  action working, and the action working is not the task being done.
+- **Guards keep the loop alive or stop it honestly.** No-effect writes, repeats on one observation and
+  revisited frames narrow the candidate set, then suspend, then end with a named reason. The full guard
+  table and the invariants behind it are in [docs/design.md](docs/design.md).
 
 ## Limits and safety
 

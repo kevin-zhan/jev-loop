@@ -1,16 +1,19 @@
 ---
 name: pi-jev
-description: Run, inspect, update, answer cognition jobs for, and safely stop persistent Jev Loop behavior bundles through the pi-jev extension. Use when running an existing project bundle (for example a read-only United MUA upgrade query) as a managed run; when a browser, game, or simulator task needs repeated observe-then-choose-the-next-action steps driven by Jev; when an environment should keep working while the main agent reasons slowly; or when you need to check, adjust, answer, or stop a run that is already in progress.
+description: Run, inspect, update, answer cognition jobs for, and safely stop persistent Jev Loop behavior bundles through the pi-jev extension. Use when a browser, game, or simulator task needs repeated observe-then-choose-the-next-action steps whose judgments must not wait for a full slow agent turn (Jev's fast, structured decisions keep the loop moving); when running an existing project bundle (for example a read-only United MUA upgrade query) as a managed run; when an environment should keep working while the main agent reasons slowly; or when you need to check, adjust, answer, or stop a run that is already in progress.
 compatibility: Requires Python 3.12+, the pi-jev extension, and a trusted project-local bundle manifest.
 ---
 
 # pi-jev
 
 pi-jev runs one project-local "behavior bundle" in its own worker process: it observes the environment,
-Jev selects the next action, the bundle executes it and records events. The pi session is not blocked by
-it, so the main agent can keep reasoning, look things up or do other work and inspect the evidence later.
-What it solves is not "call a tool once more" but "the environment has to keep moving and decisions have
-to be made repeatedly", and it must be possible to stop safely.
+Jev selects the next action, the bundle executes it and records events. Jev's hundred-millisecond-scale
+judgments (decision-request scale measured in the [README example](../../README.md), not a per-call or
+whole-task guarantee) are what make this practical: the next step can be chosen inside the loop instead of
+waiting for the main agent's next full reasoning turn. The pi session is not blocked by it, so the main
+agent can keep reasoning, look things up or do other work and inspect the evidence later. What it solves is
+not "call a tool once more" but "the environment has to keep moving and decisions have to be made
+repeatedly", and it must be possible to stop safely.
 
 pi-jev ships no website, phone or game adapters of its own; what you can do depends on whether a matching
 bundle exists. A one-off tool call stays an ordinary tool call.
