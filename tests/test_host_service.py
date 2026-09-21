@@ -101,20 +101,42 @@ def test_event_reads_are_cursor_based_and_bounded(host_home):
     assert all(event["seq"] > page["next_seq"] for event in following["events"])
 
 
-def test_cognition_wait_does_not_stop_world_or_control(host_home):
-    started = start(host_home)
+@pytest.mark.parametrize("tick_seconds", [0.05, 0.4])
+def test_cognition_wait_does_not_stop_world_or_control(host_home, tick_seconds):
+    """While a cognition job is pending the world clock and decision counter must keep advancing.
+
+    ``tick_seconds=0.4`` deliberately runs slower than the previously used fixed 0.25 s window, so
+    the test exercises a slow schedule instead of depending on one.  Note that the ``>= 3``
+    decisions have to be observed *before* answering: the diagnostic controller stops counting as
+    soon as its cognition result arrives, so responding earlier would never reach its minimum.
+    """
+    started = start(
+        host_home,
+        key=f"cognition-wait-{tick_seconds}",
+        bundle_config={"tick_seconds": tick_seconds},
+    )
     run_id = started["run"]["run_id"]
     # The coordinator emits the first controller snapshot slightly after the engine's cognition
     # request, so a status that already lists pending_cognition can still carry an empty controller
     # projection (cognition_requested seq 3, controller_snapshot seq 4 in every observed run).
-    # Wait for the state this test actually reads instead of racing the status projection.
+    # Wait until the world clock is observably running, never for a fixed sleep.
     first = wait_for(
         host_home,
         run_id,
-        lambda item: bool(item["pending_cognition"]) and "world_ticks" in item.get("controller", {}),
+        lambda item: bool(item["pending_cognition"]) and item["controller"].get("world_ticks", 0) >= 1,
     )
-    time.sleep(0.25)
-    later = inspect(host_home, run_id)
+    first_ticks = first["controller"]["world_ticks"]
+    first_decisions = first["controller"]["decisions_while_waiting"]
+
+    later = wait_for(
+        host_home,
+        run_id,
+        lambda item: bool(item["pending_cognition"])
+        and item["controller"].get("world_ticks", 0) > first_ticks
+        and item["controller"].get("decisions_while_waiting", 0) > first_decisions
+        and item["controller"].get("decisions_while_waiting", 0) >= 3,
+        timeout=10,
+    )
 
     assert later["controller"]["world_ticks"] > first["controller"]["world_ticks"]
     assert later["controller"]["decisions_while_waiting"] > first["controller"]["decisions_while_waiting"]
